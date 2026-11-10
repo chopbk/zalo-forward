@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { config as loadDotenv } from 'dotenv';
 import { z } from 'zod';
 
@@ -9,7 +10,10 @@ const baseSchema = z.object({
   ZALO_BOT_WEBHOOK_PATH: z.string().default('/webhooks/zalo-bot'),
   ZALO_BOT_WEBHOOK_SECRET: z.string().optional(),
   ZALO_BOT_POLL_TIMEOUT_SEC: z.coerce.number().int().positive().default(30),
-  ADMIN_ZALO_USER_IDS: z.string().min(1, 'ADMIN_ZALO_USER_IDS is required'),
+  /** Optional seed admins (comma-separated). Prefer /iamadmin + ADMIN_SETUP_PASSWORD. */
+  ADMIN_ZALO_USER_IDS: z.string().optional().default(''),
+  /** Password to claim admin via /iamadmin <password> (recommended). */
+  ADMIN_SETUP_PASSWORD: z.string().optional().default(''),
   DATABASE_PATH: z.string().default('./data/app.db'),
   SESSION_DIR: z.string().default('./data/sessions'),
   QR_DIR: z.string().default('./data/qr'),
@@ -54,9 +58,13 @@ export function getEnv(): Env {
   }
 
   const data = parsed.data;
-  const adminZaloUserIds = parseIdList(data.ADMIN_ZALO_USER_IDS);
-  if (adminZaloUserIds.length === 0) {
-    throw new Error('ADMIN_ZALO_USER_IDS must list at least one Zalo user id');
+  const adminZaloUserIds = parseIdList(data.ADMIN_ZALO_USER_IDS ?? '');
+  const setupPassword = (data.ADMIN_SETUP_PASSWORD ?? '').trim();
+
+  if (adminZaloUserIds.length === 0 && !setupPassword) {
+    throw new Error(
+      'Cần ít nhất ADMIN_SETUP_PASSWORD (khuyên dùng) hoặc ADMIN_ZALO_USER_IDS',
+    );
   }
 
   const zaloBotTransport =
@@ -76,6 +84,15 @@ export function resetEnvCache(): void {
   cached = null;
 }
 
-export function isAdmin(zaloUserId: string): boolean {
-  return getEnv().adminZaloUserIds.includes(String(zaloUserId));
+export function verifyAdminSetupPassword(input: string): boolean {
+  const expected = (getEnv().ADMIN_SETUP_PASSWORD ?? '').trim();
+  if (!expected) return false;
+  const a = Buffer.from(input);
+  const b = Buffer.from(expected);
+  const max = Math.max(a.length, b.length, 1);
+  const aa = Buffer.alloc(max);
+  const bb = Buffer.alloc(max);
+  a.copy(aa);
+  b.copy(bb);
+  return timingSafeEqual(aa, bb) && a.length === b.length;
 }

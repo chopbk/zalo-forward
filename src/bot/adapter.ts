@@ -206,7 +206,8 @@ export class ZaloBotControl {
   }
 
   async notifyAdmins(text: string): Promise<void> {
-    for (const id of getEnv().adminZaloUserIds) {
+    const { listAdminNotifyIds } = await import('../db/admins.js');
+    for (const id of listAdminNotifyIds()) {
       try {
         await this.sendText(id, text);
       } catch (err) {

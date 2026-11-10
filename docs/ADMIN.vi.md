@@ -3,9 +3,14 @@
 ## Chuẩn bị
 
 1. Tạo bot trên **Zalo Bot Platform** (OA Zalo Bot Manager) → lấy `ZALO_BOT_TOKEN`.
-2. Chat với bot một lần, lấy **user id** của bạn → ghi vào `ADMIN_ZALO_USER_IDS`.
-3. `cp .env.example .env` → điền token + admin ids → `npm install` → `npm run dev`.
-4. (Khuyến nghị) public HTTPS + `PUBLIC_BASE_URL` để gửi link QR.
+2. `cp .env.example .env` → điền token + **`ADMIN_SETUP_PASSWORD`** (mật khẩu tự chọn).
+3. `npm install` → `npm run dev`.
+4. Chat với bot:
+   - `/whoami` — xem Zalo user id của bạn (không bắt buộc)
+   - `/iamadmin <mật_khẩu>` — nhận quyền admin, **id tự lưu vào DB**
+5. (Khuyến nghị) public HTTPS + `PUBLIC_BASE_URL` để gửi link QR.
+
+Không cần biết trước user id. `ADMIN_ZALO_USER_IDS` chỉ là tuỳ chọn seed.
 
 ## Duyệt user
 
@@ -13,12 +18,16 @@ Khi user gõ `/start`, admin nhận thông báo.
 
 | Lệnh | Việc |
 |------|------|
+| `/iamadmin <mk>` | Claim admin lần đầu (ai biết mật khẩu) |
+| `/whoami` | Xem id của mình |
 | `/pending` | Danh sách chờ |
 | `/approve <id>` | Duyệt |
 | `/reject <id>` | Từ chối |
 | `/users` | Tất cả tenant |
 | `/suspend <id>` / `/unsuspend <id>` | Khóa / mở |
 | `/tenant <id>` | Chi tiết |
+| `/admins` | Admin đã lưu DB |
+| `/revokeadmin <zalo_user_id>` | Gỡ admin DB |
 | `/adminhelp` | Trợ giúp admin |
 
 ## User làm gì sau khi duyệt

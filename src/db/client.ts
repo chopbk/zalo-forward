@@ -41,7 +41,7 @@ export type ForwardRuleRow = {
 
 let db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export function getDb(): Database.Database {
   if (db) return db;
@@ -158,6 +158,28 @@ function migrate(database: Database.Database): void {
       );
     `);
 
+    database
+      .prepare(
+        `INSERT INTO schema_meta(key, value) VALUES('version', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run('1');
+    logger.info({ version: 1 }, 'DB migrated');
+  }
+
+  const rowAfter = database
+    .prepare(`SELECT value FROM schema_meta WHERE key = 'version'`)
+    .get() as { value: string } | undefined;
+  const current = rowAfter ? Number(rowAfter.value) : 0;
+
+  if (current < 2) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS admins (
+        zalo_bot_user_id TEXT PRIMARY KEY,
+        display_name TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
     database
       .prepare(
         `INSERT INTO schema_meta(key, value) VALUES('version', ?)

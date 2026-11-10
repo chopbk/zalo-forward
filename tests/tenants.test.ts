@@ -20,7 +20,8 @@ let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'zmf-test-'));
   process.env.ZALO_BOT_TOKEN = 'test-token';
-  process.env.ADMIN_ZALO_USER_IDS = 'admin1';
+  process.env.ADMIN_SETUP_PASSWORD = 'secret-admin';
+  process.env.ADMIN_ZALO_USER_IDS = '';
   process.env.DATABASE_PATH = join(dir, 'test.db');
   process.env.ZALO_BOT_TRANSPORT = 'polling';
   resetEnvCache();

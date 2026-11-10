@@ -1,5 +1,6 @@
-import { isAdmin } from '../config/env.js';
+import { verifyAdminSetupPassword } from '../config/env.js';
 import logger from '../config/logger.js';
+import { addAdmin, isAdmin } from '../db/admins.js';
 import {
   createOrGetPending,
   findTenantByBotUserId,
@@ -64,6 +65,43 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
   const text = msg.text.trim();
   const zaloUserId = msg.zaloUserId;
   const lower = text.toLowerCase();
+
+  // Ai cũng xem được id của mình
+  if (text === '/whoami' || text === '/myid') {
+    await bot.sendText(
+      zaloUserId,
+      `Zalo user id của bạn (với bot):\n${zaloUserId}\n` +
+        (msg.displayName ? `Tên: ${msg.displayName}\n` : '') +
+        (isAdmin(zaloUserId)
+          ? 'Bạn đang là admin.'
+          : 'Chưa phải admin. Claim: /iamadmin <mật khẩu>'),
+    );
+    return;
+  }
+
+  // Claim admin bằng mật khẩu trong .env — không cần biết id trước
+  if (text.startsWith('/iamadmin') || text.startsWith('/adminpass')) {
+    const password = text.replace(/^\/(iamadmin|adminpass)\s*/i, '').trim();
+    if (!password) {
+      await bot.sendText(
+        zaloUserId,
+        'Dùng: /iamadmin <mật_khẩu>\nMật khẩu = ADMIN_SETUP_PASSWORD trong file .env trên server.',
+      );
+      return;
+    }
+    if (!verifyAdminSetupPassword(password)) {
+      await bot.sendText(zaloUserId, 'Mật khẩu không đúng.');
+      return;
+    }
+    const { created, admin } = addAdmin(zaloUserId, msg.displayName);
+    await bot.sendText(
+      zaloUserId,
+      created
+        ? `OK — bạn đã là admin.\nID đã lưu: ${admin.zaloBotUserId}\nGõ /adminhelp`
+        : `Bạn đã là admin từ trước.\nID: ${admin.zaloBotUserId}\nGõ /adminhelp`,
+    );
+    return;
+  }
 
   // Admin commands first
   if (await handleAdminCommand(bot, zaloUserId, text)) return;

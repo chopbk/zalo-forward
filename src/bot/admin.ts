@@ -1,4 +1,8 @@
-import { isAdmin } from '../config/env.js';
+import {
+  isAdmin,
+  listAdmins,
+  removeAdmin,
+} from '../db/admins.js';
 import {
   findTenantByBotUserId,
   findTenantById,
@@ -44,6 +48,38 @@ export async function handleAdminCommand(
     case '/adminhelp':
       await bot.sendText(zaloUserId, ADMIN_HELP);
       return true;
+
+    case '/admins': {
+      const dbAdmins = listAdmins();
+      const lines =
+        dbAdmins.length === 0
+          ? ['(chưa có admin trong DB — dùng /iamadmin <mật khẩu>)']
+          : dbAdmins.map(
+              (a) => `• ${a.displayName ?? '-'} — ${a.zaloBotUserId}`,
+            );
+      await bot.sendText(
+        zaloUserId,
+        `Admin (DB):\n${lines.join('\n')}\n\nGỡ: /revokeadmin <zalo_user_id>`,
+      );
+      return true;
+    }
+
+    case '/revokeadmin': {
+      if (!arg) {
+        await bot.sendText(zaloUserId, 'Dùng: /revokeadmin <zalo_user_id>');
+        return true;
+      }
+      if (arg === zaloUserId) {
+        await bot.sendText(zaloUserId, 'Không tự gỡ chính mình bằng lệnh này.');
+        return true;
+      }
+      const ok = removeAdmin(arg);
+      await bot.sendText(
+        zaloUserId,
+        ok ? `Đã gỡ admin ${arg}` : `Không tìm thấy admin DB ${arg}`,
+      );
+      return true;
+    }
 
     case '/pending': {
       const pending = listTenants('pending');

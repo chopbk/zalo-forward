@@ -16,15 +16,15 @@ Chuyển tiếp tin nhắn / ảnh / link từ **group Zalo nguồn** sang **nhi
 
 ```bash
 cp .env.example .env
-# Điền ZALO_BOT_TOKEN + ADMIN_ZALO_USER_IDS
+# Điền ZALO_BOT_TOKEN + ADMIN_SETUP_PASSWORD
 npm install
 npm run dev
 ```
 
-1. User chat bot: `/start` → chờ duyệt  
-2. Admin: `/pending` → `/approve <id>`  
-3. User: `/login` (quét QR) → `/groups` → `/addrule`  
-4. Tin ở group nguồn được forward theo luật  
+1. Bạn chat bot: `/iamadmin <mật_khẩu>` → thành admin (id tự lưu DB)  
+2. User khác: `/start` → chờ duyệt  
+3. Admin: `/pending` → `/approve <id>`  
+4. User: `/login` (quét QR) → `/groups` → `/addrule`  
 
 Chi tiết vận hành: [docs/ADMIN.vi.md](./docs/ADMIN.vi.md)
 
@@ -33,9 +33,9 @@ Chi tiết vận hành: [docs/ADMIN.vi.md](./docs/ADMIN.vi.md)
 Xem [`.env.example`](./.env.example). Bắt buộc:
 
 - `ZALO_BOT_TOKEN` — token Bot Platform  
-- `ADMIN_ZALO_USER_IDS` — id Zalo admin (người chat với bot)
+- `ADMIN_SETUP_PASSWORD` — mật khẩu claim admin qua `/iamadmin` (khuyên dùng)
 
-Gợi ý: set `PUBLIC_BASE_URL` (HTTPS) để bot gửi link ảnh QR.
+Tuỳ chọn: `ADMIN_ZALO_USER_IDS` nếu đã biết sẵn id. Gợi ý set `PUBLIC_BASE_URL` (HTTPS) cho link QR.
 
 ## Scripts
 

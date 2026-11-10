@@ -10,7 +10,9 @@ export const USER_HELP = `Zalo Message Forward — hướng dẫn
 8) /pause | /resume — tắt/bật chuyển tiếp
 9) /logout — đăng xuất nick cá nhân
 10) /cancel — hủy wizard đang làm
-11) /help — xem lại hướng dẫn
+11) /whoami — xem Zalo user id của bạn
+12) /iamadmin <mật khẩu> — nhận quyền admin (lần đầu)
+13) /help — xem lại hướng dẫn
 
 Lưu ý: dùng nick Zalo phụ. Automation không chính thức có rủi ro hạn chế tài khoản.`;
 
@@ -21,4 +23,6 @@ export const ADMIN_HELP = `Lệnh admin:
 /users — danh sách user
 /suspend <id> | /unsuspend <id>
 /tenant <id> — chi tiết
+/admins — danh sách admin (DB)
+/revokeadmin <zalo_user_id> — gỡ admin DB
 /adminhelp — trợ giúp admin`;
