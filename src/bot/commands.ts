@@ -10,12 +10,14 @@ import {
 } from '../db/tenants.js';
 import {
   addKeywords,
-  createRule,
   deleteRule,
+  getGroupName,
   getRule,
   listGroupCache,
   listRules,
   setRuleEnabled,
+  updateRule,
+  upsertRuleBySource,
 } from '../db/rules.js';
 import { startQrLogin } from '../personal/login-qr.js';
 import { sessionManager } from '../personal/manager.js';
@@ -28,7 +30,24 @@ import {
   handleConversationReply,
 } from './flows.js';
 import { ADD_RULE_HELP, ADMIN_HELP, USER_HELP } from './help.js';
-import { ADDRULE_USAGE, parseAddRuleCommand } from './parse-addrule.js';
+import { formatGroupLabel, formatGroupList } from './format-group.js';
+import {
+  ADDRULE_USAGE,
+  RULES_SET_USAGE,
+  parseAddRuleCommand,
+  parseSetRuleArgs,
+} from './parse-addrule.js';
+
+async function ensureGroupNames(tenantId: number, groupIds: string[]): Promise<void> {
+  const missing = groupIds.filter((id) => !getGroupName(tenantId, id));
+  if (missing.length === 0) return;
+  if (!sessionManager.isRunning(tenantId)) return;
+  try {
+    await sessionManager.refreshGroups(tenantId);
+  } catch (err) {
+    logger.warn({ err, tenantId }, 'refreshGroups for rule labels failed');
+  }
+}
 
 function requireApproved(zaloUserId: string) {
   const tenant = findTenantByBotUserId(zaloUserId);
@@ -315,7 +334,7 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
       let groups: Array<{ groupId: string; name: string | null }> = [];
       if (sessionManager.isRunning(tenant.id)) {
         try {
-          // listGroups đã sort: ghim trước, rồi gần đây nhất
+          // listGroups: ghim trước, rồi tin gần đây nhất (unread + cache + probe)
           const live = await sessionManager.refreshGroups(tenant.id);
           groups = live.map((g) => ({ groupId: g.groupId, name: g.name }));
         } catch {
@@ -329,7 +348,7 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
         return;
       }
       const lines = [
-        'Group (ghim → gần đây nhất):',
+        'Group (ghim → tin gần đây nhất):',
         ...groups.map((g, i) => `${i + 1}. ${g.name ?? '?'} — id=${g.groupId}`),
       ];
       // chunk if long
@@ -358,7 +377,8 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
       return;
     }
     try {
-      const rule = createRule({
+      await ensureGroupNames(tenant.id, [parsed.sourceGroupId, ...parsed.targets]);
+      const { rule, created, removedIds } = upsertRuleBySource({
         tenantId: tenant.id,
         sourceGroupId: parsed.sourceGroupId,
         targets: parsed.targets,
@@ -371,11 +391,16 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
           targets: r.targets,
         })),
       );
+      const sourceLabel = formatGroupLabel(tenant.id, rule.sourceGroupId);
+      const targetLabels = formatGroupList(tenant.id, rule.targets);
       let msg =
-        `Đã tạo luật #${rule.id}\n` +
-        `${rule.sourceGroupId} → ${rule.targets.join(', ')}\n` +
+        `${created ? 'Đã tạo' : 'Đã cập nhật'} luật #${rule.id}\n` +
+        `${sourceLabel}\n→ ${targetLabels}\n` +
         `Lọc: ${rule.filterMode}` +
         (rule.filterMode === 'keywords' ? ` [${rule.keywords.join(', ')}]` : '');
+      if (removedIds.length > 0) {
+        msg += `\nĐã xóa luật trùng nguồn: ${removedIds.map((id) => `#${id}`).join(', ')}`;
+      }
       if (cycles.length) msg += `\n⚠️ Cảnh báo vòng lặp: ${cycles.join('; ')}`;
       await bot.sendText(zaloUserId, msg);
     } catch (err) {
@@ -397,22 +422,85 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
         await bot.sendText(zaloUserId, 'Chưa có luật. /addrule');
         return;
       }
+      await ensureGroupNames(
+        tenant.id,
+        rules.flatMap((r) => [r.sourceGroupId, ...r.targets]),
+      );
       const lines = rules.map((r) => {
         const flag = r.enabled ? 'ON' : 'OFF';
-        return `#${r.id} [${flag}] ${r.sourceGroupId} → ${r.targets.join(',')} | ${r.filterMode}${
-          r.filterMode === 'keywords' ? ` (${r.keywords.join('|')})` : ''
-        }`;
+        const source = formatGroupLabel(tenant.id, r.sourceGroupId);
+        const targets = formatGroupList(tenant.id, r.targets);
+        return (
+          `#${r.id} [${flag}] ${source}\n→ ${targets}\n` +
+          `Lọc: ${r.filterMode}` +
+          (r.filterMode === 'keywords' ? ` (${r.keywords.join('|')})` : '')
+        );
       });
       await bot.sendText(
         zaloUserId,
-        `${lines.join('\n')}\n\n/rules off <id> | /rules on <id> | /rules del <id>`,
+        `${lines.join('\n\n')}\n\n` +
+          `/rules set <id> <đích,...> all\n` +
+          `/rules off <id> | /rules on <id> | /rules del <id>`,
       );
+      return;
+    }
+
+    if (sub === 'set') {
+      const parsed = parseSetRuleArgs(parts.slice(2).join(' '));
+      if ('error' in parsed) {
+        await bot.sendText(zaloUserId, parsed.error);
+        return;
+      }
+      const existing = getRule(parsed.ruleId);
+      if (!existing || existing.tenantId !== tenant.id) {
+        await bot.sendText(zaloUserId, 'Không tìm thấy luật.');
+        return;
+      }
+      try {
+        await ensureGroupNames(tenant.id, [
+          existing.sourceGroupId,
+          ...parsed.targets,
+        ]);
+        const updated = updateRule(parsed.ruleId, {
+          targets: parsed.targets,
+          filterMode: parsed.filterMode,
+          keywords: parsed.keywords,
+        });
+        if (!updated) {
+          await bot.sendText(zaloUserId, 'Không tìm thấy luật.');
+          return;
+        }
+        const cycles = detectSimpleCycles(
+          listRules(tenant.id).map((r) => ({
+            sourceGroupId: r.sourceGroupId,
+            targets: r.targets,
+          })),
+        );
+        let msg =
+          `Đã sửa luật #${updated.id}\n` +
+          `${formatGroupLabel(tenant.id, updated.sourceGroupId)}\n` +
+          `→ ${formatGroupList(tenant.id, updated.targets)}\n` +
+          `Lọc: ${updated.filterMode}` +
+          (updated.filterMode === 'keywords'
+            ? ` [${updated.keywords.join(', ')}]`
+            : '');
+        if (cycles.length) msg += `\n⚠️ Cảnh báo vòng lặp: ${cycles.join('; ')}`;
+        await bot.sendText(zaloUserId, msg);
+      } catch (err) {
+        await bot.sendText(
+          zaloUserId,
+          `Lỗi: ${err instanceof Error ? err.message : String(err)}\n\n${RULES_SET_USAGE}`,
+        );
+      }
       return;
     }
 
     const id = Number(parts[2]);
     if (!Number.isFinite(id)) {
-      await bot.sendText(zaloUserId, 'Dùng: /rules on|off|del <id>');
+      await bot.sendText(
+        zaloUserId,
+        'Dùng: /rules set <id> <đích,...> all | /rules on|off|del <id>',
+      );
       return;
     }
     const rule = getRule(id);
@@ -420,22 +508,27 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
       await bot.sendText(zaloUserId, 'Không tìm thấy luật.');
       return;
     }
+    const rulePath =
+      `${formatGroupLabel(tenant.id, rule.sourceGroupId)}\n→ ${formatGroupList(tenant.id, rule.targets)}`;
     if (sub === 'on') {
       setRuleEnabled(id, true);
-      await bot.sendText(zaloUserId, `Đã bật luật #${id}`);
+      await bot.sendText(zaloUserId, `Đã bật luật #${id}\n${rulePath}`);
       return;
     }
     if (sub === 'off') {
       setRuleEnabled(id, false);
-      await bot.sendText(zaloUserId, `Đã tắt luật #${id}`);
+      await bot.sendText(zaloUserId, `Đã tắt luật #${id}\n${rulePath}`);
       return;
     }
     if (sub === 'del' || sub === 'delete' || sub === 'rm') {
       deleteRule(id);
-      await bot.sendText(zaloUserId, `Đã xóa luật #${id}`);
+      await bot.sendText(zaloUserId, `Đã xóa luật #${id}\n${rulePath}`);
       return;
     }
-    await bot.sendText(zaloUserId, 'Dùng: /rules on|off|del <id>');
+    await bot.sendText(
+      zaloUserId,
+      'Dùng: /rules set <id> <đích,...> all | /rules on|off|del <id>',
+    );
     return;
   }
 

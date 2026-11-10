@@ -6,7 +6,7 @@ import {
   upsertSession,
   type Tenant,
 } from '../db/tenants.js';
-import { upsertGroupCache } from '../db/rules.js';
+import { setGroupLastSeen, upsertGroupCache } from '../db/rules.js';
 import { deleteSessionFile } from './session.js';
 import { loginWithSession } from './session.js';
 import { PersonalAccountAdapter } from './adapter.js';
@@ -122,12 +122,14 @@ export class SessionManager {
     const adapter = this.getAdapter(tenantId);
     if (!adapter) throw new Error('Session chưa chạy — /login rồi /resume');
     const groups = await adapter.listGroups();
-    const now = Date.now();
-    groups.forEach((g, i) => {
-      // Giữ ts thật; group chưa có activity giữ thứ tự sort bằng ts giả giảm dần
-      const ts = g.lastActiveAt && g.lastActiveAt > 0 ? g.lastActiveAt : now - i;
-      upsertGroupCache(tenantId, g.groupId, g.name, ts);
-    });
+    for (const g of groups) {
+      // Ghi đè timestamp từ unread/probe. Không MAX với giá trị giả cũ.
+      if (g.lastActiveAt && g.lastActiveAt > 0) {
+        setGroupLastSeen(tenantId, g.groupId, g.name, g.lastActiveAt);
+      } else {
+        upsertGroupCache(tenantId, g.groupId, g.name);
+      }
+    }
     return groups;
   }
 }

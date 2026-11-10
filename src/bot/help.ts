@@ -5,20 +5,24 @@ Setup:
 2) /login — quét QR nick Zalo (nên nick phụ)
 3) /groups — lấy id group
 4) /addrule ... — tạo luật (1 lệnh)
-5) /rules — xem / bật / tắt / xóa
+5) /rules — xem / sửa / bật / tắt / xóa
 
-/addrule (format đầy đủ):
+/addrule (tạo mới hoặc sửa nếu trùng nguồn):
 /addrule <id_nguồn> <id_đích,...> all
 /addrule <id_nguồn> <id_đích,...> keywords <từ_khóa,...>
 
+Cùng id nguồn → tự cập nhật luật cũ, không tạo bản trùng.
+Cũng có thể sửa tay: /rules set <id_luật> <id_đích,...> all
+
 Ví dụ:
+/addrule 9045111 9045222 all
 /addrule 9045111 9045222,9045333 all
-/addrule 9045111 9045222,9045333 keywords sale,hot
 
 Chi tiết: /help addrule
 
 Lệnh khác:
 /status
+/rules set <id> <đích,...> all
 /rules on|off|del <id>
 /keywords <id_luật> <từ_khóa,...>
 /pause | /resume
@@ -38,7 +42,7 @@ Format:
 Tham số:
 • id_nguồn — 1 group (lấy từ /groups)
 • id_đích — một hoặc nhiều, cách nhau dấu phẩy (không trùng nguồn)
-• all — forward mọi tin text/ảnh/link
+• all — forward mọi tin text/ảnh/link trong group nguồn (mọi thành viên)
 • keywords — chỉ tin chứa ≥1 từ khóa (không phân biệt hoa thường)
 
 Ví dụ 1 — forward tất cả từ A sang 1 và 2:
@@ -49,11 +53,14 @@ Ví dụ 2 — chỉ tin có "sale" hoặc "hot":
 
 Sau khi tạo:
 /rules — liệt kê
+/addrule lại cùng nguồn = ghi đè đích/lọc luật cũ
+/rules set 3 9045222,9045333 all — sửa theo id luật
 /rules off 3 | /rules on 3 | /rules del 3
 /keywords 3 deal,vip — thêm từ khóa cho luật #3
 
 Mẹo:
-• Nhiều nguồn = gọi /addrule nhiều lần
+• Cùng nguồn A, muốn thêm đích C: /addrule A B,C all
+• Nhiều nguồn = gọi /addrule nhiều lần (mỗi nguồn 1 luật)
 • Tránh A→B và B→A (vòng lặp; bot cảnh báo)`;
 
 export const ADMIN_HELP = `Lệnh admin:

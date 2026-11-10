@@ -186,9 +186,8 @@ export class ZaloBotControl {
   }
 
   /**
-   * Gửi QR vào chat Zalo của user (bắt buộc cho multi-tenant).
-   * sendPhoto chỉ nhận HTTPS URL → PUBLIC_BASE_URL / auto-tunnel / host tạm;
-   * nếu gửi ảnh fail vẫn gửi link HTTPS để user mở trên điện thoại.
+   * Gửi QR vào chat Zalo của user.
+   * Chốt: upload host tạm (catbox/…) → thử sendPhoto → luôn gửi kèm link HTTPS.
    */
   async sendPhoto(userId: string, filePath: string, caption?: string): Promise<void> {
     const absPath = resolvePath(filePath);
@@ -197,49 +196,54 @@ export class ZaloBotControl {
     const errors: string[] = [];
     let imageUrl: string | null = null;
 
-    // 1) PUBLIC_BASE_URL hoặc localtunnel → /qr/file
-    try {
-      const base = await getPublicBaseUrl();
-      if (base) {
-        imageUrl = qrFilePublicUrl(base, filePath);
-        // Đảm bảo file đã sẵn sàng trên HTTP local trước khi Zalo fetch
-        await waitLocalQrReady(filePath, getEnv().PORT);
-        await this.sendPhotoByUrl(userId, imageUrl, caption);
-        return;
-      }
-    } catch (err) {
-      errors.push(`tunnel/public: ${err instanceof Error ? err.message : String(err)}`);
-      logger.warn({ err }, 'sendPhoto via public base failed');
-    }
-
-    // 2) Host tạm (catbox race…)
+    // 1) Host tạm — ổn định trên VPS chỉ có IP, không cần domain
     if (getEnv().QR_TEMP_UPLOAD) {
       try {
         imageUrl = await uploadTempImageUrl(filePath);
-        await this.sendPhotoByUrl(userId, imageUrl, caption);
-        return;
       } catch (err) {
         errors.push(`temp: ${err instanceof Error ? err.message : String(err)}`);
-        logger.warn({ err }, 'sendPhoto via temp host failed');
+        logger.warn({ err }, 'sendPhoto temp upload failed');
       }
     }
 
-    // 3) Còn URL thì gửi link — user mở trên điện thoại rồi quét
-    if (imageUrl) {
+    // 2) Dự phòng: PUBLIC_BASE_URL / localtunnel
+    if (!imageUrl) {
+      try {
+        const base = await getPublicBaseUrl();
+        if (base) {
+          imageUrl = qrFilePublicUrl(base, filePath);
+          await waitLocalQrReady(filePath, getEnv().PORT);
+        }
+      } catch (err) {
+        errors.push(`tunnel/public: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn({ err }, 'sendPhoto via public base failed');
+      }
+    }
+
+    if (!imageUrl) {
       await this.sendText(
         userId,
         `${caption ? caption + '\n' : ''}` +
-          `Không gửi được ảnh trực tiếp. Mở link này trên điện thoại rồi quét QR:\n${imageUrl}`,
+          `Chưa gửi được QR.\n` +
+          `Bật QR_TEMP_UPLOAD=true hoặc kiểm tra mạng ra host tạm.\n` +
+          `(${errors.join(' | ') || 'no url'})`,
       );
       return;
     }
 
+    let photoOk = false;
+    try {
+      await this.sendPhotoByUrl(userId, imageUrl, caption);
+      photoOk = true;
+    } catch (err) {
+      errors.push(`sendPhoto: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn({ err, imageUrl }, 'sendPhoto by URL failed — vẫn gửi link');
+    }
+
+    // Luôn gửi link host tạm để user mở trên điện thoại nếu ảnh không hiện
     await this.sendText(
       userId,
-      `${caption ? caption + '\n' : ''}` +
-        `Chưa gửi được QR vào chat.\n` +
-        `Thử set PUBLIC_BASE_URL=https://... (ngrok) hoặc kiểm tra mạng.\n` +
-        `(${errors.join(' | ') || 'no url'})`,
+      `${photoOk ? 'Link QR (nếu ảnh không hiện):' : 'Mở link này trên điện thoại rồi quét QR:'}\n${imageUrl}`,
     );
   }
 

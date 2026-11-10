@@ -26,7 +26,8 @@ npm run dev
 3. Admin: `/pending` → `/approve <id>`  
 4. User: `/login` (quét QR) → `/groups` → `/addrule`  
 
-Chi tiết vận hành: [docs/ADMIN.vi.md](./docs/ADMIN.vi.md)
+- Hướng dẫn lệnh (user + admin): [docs/HUONG-DAN-SU-DUNG.md](./docs/HUONG-DAN-SU-DUNG.md)  
+- Vận hành server / admin: [docs/ADMIN.vi.md](./docs/ADMIN.vi.md)
 
 ## Env
 
@@ -37,7 +38,7 @@ Xem [`.env.example`](./.env.example). Bắt buộc:
 
 Tuỳ chọn: `ADMIN_ZALO_USER_IDS` nếu đã biết sẵn id.
 
-QR login: bot **gửi ảnh/link QR vào chat Zalo** của user. `sendPhoto` cần HTTPS URL → `PUBLIC_BASE_URL` (khuyên dùng), hoặc `QR_AUTO_TUNNEL` (localtunnel), hoặc `QR_TEMP_UPLOAD` (catbox…).
+QR login: bot upload ảnh lên host tạm (`QR_TEMP_UPLOAD=true`, catbox/…) rồi **gửi ảnh + link** vào chat. Không cần domain/HTTPS trên VPS. `PUBLIC_BASE_URL` / tunnel chỉ là dự phòng.
 
 ## Scripts
 

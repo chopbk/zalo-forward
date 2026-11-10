@@ -1,3 +1,11 @@
+import {
+  extractMentions,
+  extractStylesFromParams,
+  extractStylesFromPropertyExt,
+  type ForwardMention,
+  type ForwardStyle,
+} from './styles.js';
+
 export type InboundImage = { url: string };
 
 export type ExtractedLink = {
@@ -10,10 +18,16 @@ export type ExtractedLink = {
 export type NormalizedGroupMessage = {
   groupId: string;
   messageId: string;
+  /** Timestamp tin gốc (ms hoặc giây — giữ raw number từ Zalo). */
+  ts?: number;
   senderId?: string;
   senderName?: string;
   text: string;
   images: InboundImage[];
+  styles: ForwardStyle[];
+  mentions: ForwardMention[];
+  /** propertyExt.ext thô — dùng debug / native forward. */
+  propertyExtExt?: string;
   isSelf: boolean;
 };
 
@@ -133,6 +147,9 @@ export function parseGroupMessage(message: {
     msgId?: string | number;
     uidFrom?: string | number;
     dName?: string;
+    ts?: string | number;
+    propertyExt?: unknown;
+    mentions?: unknown;
   };
 }): NormalizedGroupMessage | null {
   const messageId =
@@ -143,34 +160,83 @@ export function parseGroupMessage(message: {
   const msgType = message.data.msgType;
   let text = '';
   const images: InboundImage[] = [];
+  let keepRichStyles = false;
+
+  let rtfStyles: ForwardStyle[] = [];
 
   if (typeof content === 'string') {
     text = content;
-  } else {
-    const imgs = extractInboundImages(content, msgType);
-    if (imgs) {
-      images.push(...imgs);
-      text = captionFromPhotoContent(content);
+    keepRichStyles = true;
+  } else if (content && typeof content === 'object') {
+    const obj = content as Record<string, unknown>;
+    const isRtf =
+      obj.action === 'rtf' ||
+      (typeof obj.params === 'string' && obj.params.includes('"styles"'));
+
+    if (isRtf && typeof obj.title === 'string') {
+      // RTF: không trim — style offset theo đúng title (emoji surrogate)
+      text = obj.title;
+      rtfStyles = extractStylesFromParams(obj.params);
+      keepRichStyles = true;
     } else {
-      const link = extractLinkAttachment(content, msgType);
-      if (link) {
-        text = formatLinkText(link);
-        if (link.thumb) images.push({ url: link.thumb });
+      const imgs = extractInboundImages(content, msgType);
+      if (imgs) {
+        images.push(...imgs);
+        text = captionFromPhotoContent(content);
       } else {
-        return null;
+        const link = extractLinkAttachment(content, msgType);
+        if (link) {
+          text = formatLinkText(link);
+          if (link.thumb) images.push({ url: link.thumb });
+        } else {
+          for (const key of ['title', 'description', 'text', 'msg', 'content']) {
+            const v = obj[key];
+            if (typeof v === 'string' && v.trim() && !v.startsWith('{')) {
+              text = v.trim();
+              break;
+            }
+          }
+          if (!text.trim()) {
+            text = `[tin ${msgType ?? 'không hỗ trợ'}]`;
+          }
+        }
       }
     }
+  } else if (content == null) {
+    text = `[tin ${msgType ?? 'trống'}]`;
+  } else {
+    return null;
   }
 
   if (!text.trim() && images.length === 0) return null;
 
+  const stylesFromExt = keepRichStyles
+    ? extractStylesFromPropertyExt(message.data.propertyExt)
+    : [];
+  const styles = rtfStyles.length > 0 ? rtfStyles : stylesFromExt;
+  const mentions = keepRichStyles ? extractMentions(message.data.mentions) : [];
+
+  const rawTs = message.data.ts != null ? Number(message.data.ts) : NaN;
+  const ts = Number.isFinite(rawTs) ? rawTs : undefined;
+
+  const propertyExt =
+    message.data.propertyExt && typeof message.data.propertyExt === 'object'
+      ? (message.data.propertyExt as { ext?: unknown })
+      : null;
+  const propertyExtExt =
+    typeof propertyExt?.ext === 'string' ? propertyExt.ext : undefined;
+
   return {
     groupId: String(message.threadId),
     messageId,
+    ts,
     senderId: message.data.uidFrom != null ? String(message.data.uidFrom) : undefined,
     senderName: typeof message.data.dName === 'string' ? message.data.dName : undefined,
     text,
     images,
+    styles,
+    mentions,
+    propertyExtExt,
     isSelf: message.isSelf,
   };
 }

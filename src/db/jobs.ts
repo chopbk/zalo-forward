@@ -1,12 +1,19 @@
 import { getDb, type JobStatus } from './client.js';
 import { getEnv } from '../config/env.js';
 
+import type { ForwardMention, ForwardStyle } from '../relay/styles.js';
+
 export type ForwardJobPayload = {
   sourceGroupId: string;
   destGroupId: string;
   text?: string;
   images?: Array<{ url: string }>;
+  styles?: ForwardStyle[];
+  mentions?: ForwardMention[];
   sourceMessageId: string;
+  sourceTs?: number;
+  /** Ưu tiên api.forwardMessage (gần nút Share Zalo) cho tin text. */
+  preferNativeForward?: boolean;
   senderName?: string;
 };
 

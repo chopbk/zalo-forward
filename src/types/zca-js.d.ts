@@ -31,8 +31,23 @@ declare module 'zca-js' {
         };
       };
 
+  export type TextStyleRange = {
+    start: number;
+    len: number;
+    st: string;
+    indentSize?: number;
+  };
+
+  export type MentionRange = {
+    pos: number;
+    uid: string;
+    len: number;
+  };
+
   export type MessageContent = {
     msg: string;
+    styles?: TextStyleRange[];
+    mentions?: MentionRange[];
     attachments?: AttachmentSource | AttachmentSource[];
     ttl?: number;
   };
@@ -59,12 +74,33 @@ declare module 'zca-js' {
     attachment?: Array<{ msgId?: string | number }>;
   };
 
+  export type ForwardMessagePayload = {
+    message: string;
+    ttl?: number;
+    reference?: {
+      id: string;
+      ts: number;
+      logSrcType: number;
+      fwLvl: number;
+    };
+  };
+
+  export type ForwardMessageResponse = {
+    success?: Array<{ clientId?: string; msgId?: string }>;
+    fail?: Array<{ clientId?: string; error_code?: string }>;
+  };
+
   export type API = {
     sendMessage: (
       message: string | MessageContent,
       threadId: string,
       type?: ThreadType,
     ) => Promise<SendMessageResult>;
+    forwardMessage?: (
+      payload: ForwardMessagePayload,
+      threadIds: string[],
+      type?: ThreadType,
+    ) => Promise<ForwardMessageResponse>;
     getAllGroups: () => Promise<{ gridVerMap?: Record<string, string> }>;
     getGroupInfo: (groupId: string | string[]) => Promise<{
       gridInfoMap?: Record<
@@ -74,10 +110,23 @@ declare module 'zca-js' {
     }>;
     getUnreadMark?: () => Promise<{
       data?: {
-        convsGroup?: Array<{ id?: number | string; ts?: number }>;
+        convsGroup?: Array<{
+          id?: number | string;
+          fromUid?: number | string;
+          ts?: number;
+        }>;
       };
     }>;
     getPinConversations?: () => Promise<{ conversations?: string[] }>;
+    getGroupChatHistory?: (
+      groupId: string,
+      count?: number,
+    ) => Promise<{
+      groupMsgs?: Array<{
+        data?: { ts?: string | number };
+        ts?: string | number;
+      }>;
+    }>;
     getOwnId: () => string;
     listener: {
       on: (event: 'message', cb: (message: ZaloListenerMessage) => void) => void;
@@ -97,6 +146,19 @@ declare module 'zca-js' {
       uidFrom?: string | number;
       dName?: string;
       ts?: string | number;
+      propertyExt?: {
+        color?: number;
+        size?: number;
+        type?: number;
+        subType?: number;
+        ext?: string;
+      };
+      mentions?: Array<{
+        uid?: string;
+        pos?: number;
+        len?: number;
+        type?: number;
+      }>;
     };
   };
 

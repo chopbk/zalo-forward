@@ -24,13 +24,13 @@ const baseSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3080),
   LOG_LEVEL: z.string().default('info'),
   PUBLIC_BASE_URL: z.string().optional(),
-  /** Tự mở localtunnel khi thiếu PUBLIC_BASE_URL — để Zalo fetch /qr/... */
+  /** localtunnel khi thiếu PUBLIC_BASE_URL — chỉ dùng dev; VPS nên false */
   QR_AUTO_TUNNEL: z
     .string()
     .optional()
-    .default('true')
+    .default('false')
     .transform((v) => !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase())),
-  /** Fallback upload host tạm (catbox/…) nếu tunnel/public fail */
+  /** Upload QR lên host tạm (catbox/…) rồi gửi link — mặc định bật */
   QR_TEMP_UPLOAD: z
     .string()
     .optional()

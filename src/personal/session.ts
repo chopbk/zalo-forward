@@ -86,7 +86,8 @@ export function cookieHeaderFromSession(session: ZaloSessionFile): string {
 
 export async function loginWithSession(path: string): Promise<API> {
   const session = await loadSession(path);
-  const zalo = new Zalo({ imageMetadataGetter });
+  // selfListen: nhận cả tin do nick này gửi trong group (forward “all”)
+  const zalo = new Zalo({ imageMetadataGetter, selfListen: true });
   const api = await zalo.login({
     cookie: session.cookie,
     imei: session.imei,

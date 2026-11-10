@@ -8,7 +8,7 @@
 4. Chat với bot:
    - `/whoami` — xem Zalo user id của bạn (không bắt buộc)
    - `/iamadmin <mật_khẩu>` — nhận quyền admin, **id tự lưu vào DB**
-5. (Khuyến nghị) public HTTPS + `PUBLIC_BASE_URL` để gửi link QR.
+5. QR: giữ `QR_TEMP_UPLOAD=true` (mặc định) — bot up host tạm rồi gửi link, không cần domain.
 
 Không cần biết trước user id. `ADMIN_ZALO_USER_IDS` chỉ là tuỳ chọn seed.
 
@@ -41,17 +41,19 @@ Khi user gõ `/start`, admin nhận thông báo.
 ## Luật chuyển tiếp
 
 - Một nguồn → nhiều đích  
-- Lọc **all** hoặc **keywords** (substring, không phân biệt hoa thường)  
-- Bỏ qua tin do chính nick gửi (`isSelf`) để giảm loop  
-- Nếu tạo A→B và B→A, bot cảnh báo vòng lặp  
+- Lọc **all** = mọi tin text/ảnh/link trong **group nguồn** (mọi thành viên, kể cả nick đã `/login`)  
+- Lọc **keywords** = substring, không phân biệt hoa thường  
+- Tin do bot vừa gửi sang group đích bị lọc echo để giảm vòng lặp  
+- Nếu tạo A→B và B→A, bot cảnh báo vòng lặp — tránh  
 
 ## Sự cố thường gặp
 
 | Hiện tượng | Cách xử lý |
 |------------|------------|
-| QR không vào chat | Cần HTTPS: set `PUBLIC_BASE_URL` (ngrok) hoặc để `QR_AUTO_TUNNEL=true`. Fallback `QR_TEMP_UPLOAD` / link trong tin nhắn |
+| QR không vào chat | `QR_TEMP_UPLOAD=true`; xem log temp upload; mở link host tạm trên điện thoại |
 | Listener dừng | Không mở Zalo Web cùng nick; `/logout` rồi `/login` |
-| Không forward | `/status` — approved? session active? relay on? có rule đúng nguồn? |
+| Không forward | `/status` — approved? session active? relay on? `/addrule` đúng **id group** từ `/groups` (không phải chat 1-1 với bot Official)? |
+| Chỉ thấy tin của mình | Cần restart sau bản có `selfListen`; kiểm tra log `Enqueued forward jobs` có `sender` khác nhau |
 | Gần bị limit | Tăng `ZALO_MIN_SEND_INTERVAL_MS`, giảm `ZALO_SEND_MAX_PER_MINUTE` |
 
 ## Rủi ro

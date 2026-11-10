@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseAddRuleCommand } from '../src/bot/parse-addrule.js';
+import { parseAddRuleCommand, parseSetRuleArgs } from '../src/bot/parse-addrule.js';
 
 describe('parseAddRuleCommand', () => {
   it('parses all mode', () => {
@@ -34,5 +34,25 @@ describe('parseAddRuleCommand', () => {
 
   it('errors when missing args', () => {
     expect(parseAddRuleCommand('/addrule')).toHaveProperty('error');
+  });
+});
+
+describe('parseSetRuleArgs', () => {
+  it('parses set destinations', () => {
+    expect(parseSetRuleArgs('3 222,333 all')).toEqual({
+      ruleId: 3,
+      targets: ['222', '333'],
+      filterMode: 'all',
+      keywords: [],
+    });
+  });
+
+  it('parses keywords mode', () => {
+    expect(parseSetRuleArgs('7 222 keywords sale,hot')).toEqual({
+      ruleId: 7,
+      targets: ['222'],
+      filterMode: 'keywords',
+      keywords: ['sale', 'hot'],
+    });
   });
 });

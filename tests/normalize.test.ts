@@ -29,4 +29,19 @@ describe('normalize', () => {
     expect(formatLinkText(link!)).toContain('Example');
     expect(formatLinkText(link!)).toContain('https://example.com');
   });
+
+  it('falls back for unsupported object content', () => {
+    const msg = parseGroupMessage({
+      threadId: 'G1',
+      isSelf: false,
+      data: {
+        content: { foo: 1 },
+        msgType: 'chat.sticker',
+        msgId: 7,
+        dName: 'B',
+      },
+    });
+    expect(msg?.text).toContain('sticker');
+    expect(msg?.senderName).toBe('B');
+  });
 });

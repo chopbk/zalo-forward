@@ -11,6 +11,11 @@ import {
 import { canRelay, findTenantById, getSession, type Tenant } from '../db/tenants.js';
 import type { NormalizedGroupMessage } from './normalize.js';
 import { resolveDestinations } from './match.js';
+import {
+  clipStylesToText,
+  type ForwardMention,
+  type ForwardStyle,
+} from './styles.js';
 import { sessionManager } from '../personal/manager.js';
 
 let drainTimer: ReturnType<typeof setInterval> | null = null;
@@ -33,22 +38,60 @@ export async function handleGroupInbound(
   touchGroupActivity(tenant.id, msg.groupId, Date.now(), undefined);
 
   const rules = listEnabledRulesForSource(tenant.id, msg.groupId);
-  if (rules.length === 0) return;
+  if (rules.length === 0) {
+    logger.debug(
+      {
+        tenantId: tenant.id,
+        groupId: msg.groupId,
+        sender: msg.senderName ?? msg.senderId,
+      },
+      'Group inbound — no enabled rule for this source',
+    );
+    return;
+  }
 
   const matched = resolveDestinations(rules, msg.groupId, msg.text);
-  if (matched.length === 0) return;
+  if (matched.length === 0) {
+    logger.debug(
+      { tenantId: tenant.id, groupId: msg.groupId, filter: 'no match' },
+      'Group inbound — rules present but filter skipped',
+    );
+    return;
+  }
 
   const destSet = new Set<string>();
   for (const m of matched) {
     for (const d of m.destGroupIds) destSet.add(d);
   }
 
+  const body = formatForwardBody(msg);
+  const hasImages = msg.images.length > 0;
+  // Có styles RTF → bắt buộc sendMessage+styles (forwardMessage của zca-js mất format)
+  // Native forward chỉ khi text thuần không style
+  const preferNativeForward =
+    !hasImages && !!body.text.trim() && body.styles.length === 0;
+
+  if (body.styles.length > 0) {
+    logger.info(
+      {
+        tenantId: tenant.id,
+        messageId: msg.messageId,
+        styles: body.styles.length,
+      },
+      'Inbound RTF/styles — sẽ gửi lại bằng sendMessage+styles',
+    );
+  }
+
   const items: ForwardJobPayload[] = [...destSet].map((destGroupId) => ({
     sourceGroupId: msg.groupId,
     destGroupId,
-    text: msg.text,
-    images: msg.images.length > 0 ? msg.images : undefined,
+    text: body.text,
+    images: hasImages ? msg.images : undefined,
+    styles: body.styles.length > 0 ? body.styles : undefined,
+    mentions: body.mentions,
     sourceMessageId: msg.messageId,
+    sourceTs: msg.ts,
+    preferNativeForward,
     senderName: msg.senderName,
   }));
 
@@ -59,9 +102,30 @@ export async function handleGroupInbound(
       source: msg.groupId,
       dests: items.length,
       messageId: msg.messageId,
+      sender: msg.senderName ?? msg.senderId,
+      isSelf: msg.isSelf,
+      styles: body.styles?.length ?? 0,
+      preferNativeForward,
     },
     'Enqueued forward jobs',
   );
+}
+
+/** Copy đúng nội dung gốc — không gắn tên người gửi. */
+function formatForwardBody(msg: NormalizedGroupMessage): {
+  text: string;
+  styles: ForwardStyle[];
+  mentions?: ForwardMention[];
+} {
+  const text = msg.text ?? '';
+  const styles = clipStylesToText(msg.styles ?? [], text);
+  const mentions = msg.mentions ?? [];
+
+  return {
+    text,
+    styles,
+    mentions: mentions.length > 0 ? mentions : undefined,
+  };
 }
 
 async function processOneJob(): Promise<boolean> {
@@ -90,7 +154,33 @@ async function processOneJob(): Promise<boolean> {
         payload.text ?? '',
       );
     } else if (payload.text) {
-      await adapter.sendText(payload.destGroupId, payload.text);
+      let sent = false;
+      if (payload.preferNativeForward) {
+        try {
+          const tsRaw = payload.sourceTs ?? Date.now();
+          const ts = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
+          await adapter.forwardNative(payload.destGroupId, payload.text, {
+            id: payload.sourceMessageId,
+            ts,
+          });
+          sent = true;
+          logger.info(
+            { jobId: job.id, dest: payload.destGroupId },
+            'Forwarded via native forwardMessage',
+          );
+        } catch (err) {
+          logger.warn(
+            { err, jobId: job.id },
+            'native forwardMessage failed — fallback sendMessage',
+          );
+        }
+      }
+      if (!sent) {
+        await adapter.sendText(payload.destGroupId, payload.text, {
+          styles: payload.styles,
+          mentions: payload.mentions,
+        });
+      }
     }
     markJobDone(job.id);
   } catch (err) {

@@ -12,7 +12,14 @@ import {
   setTenantStatus,
   upsertSession,
 } from '../src/db/tenants.js';
-import { createRule, listEnabledRulesForSource, ruleMatchesContent } from '../src/db/rules.js';
+import {
+  createRule,
+  deleteRule,
+  listEnabledRulesForSource,
+  listRulesForSource,
+  ruleMatchesContent,
+  upsertRuleBySource,
+} from '../src/db/rules.js';
 import { claimProcessedMessage } from '../src/db/processed.js';
 
 let dir: string;
@@ -89,5 +96,68 @@ describe('rules + dedup', () => {
   it('dedup claim once', () => {
     expect(claimProcessedMessage(1, 'm1')).toBe(true);
     expect(claimProcessedMessage(1, 'm1')).toBe(false);
+  });
+
+  it('upserts by source instead of duplicating', () => {
+    const { tenant } = createOrGetPending('u5', 'User');
+    setTenantStatus(tenant.id, 'approved');
+    const first = upsertRuleBySource({
+      tenantId: tenant.id,
+      sourceGroupId: 'A',
+      targets: ['B'],
+      filterMode: 'all',
+    });
+    expect(first.created).toBe(true);
+    createRule({
+      tenantId: tenant.id,
+      sourceGroupId: 'A',
+      targets: ['X'],
+      filterMode: 'all',
+    });
+    expect(listRulesForSource(tenant.id, 'A')).toHaveLength(2);
+
+    const second = upsertRuleBySource({
+      tenantId: tenant.id,
+      sourceGroupId: 'A',
+      targets: ['B', 'C'],
+      filterMode: 'all',
+    });
+    expect(second.created).toBe(false);
+    expect(second.rule.id).toBe(first.rule.id);
+    expect(second.rule.targets).toEqual(['B', 'C']);
+    expect(second.removedIds.length).toBeGreaterThan(0);
+    expect(listRulesForSource(tenant.id, 'A')).toHaveLength(1);
+  });
+
+  it('reuses deleted rule id', () => {
+    const { tenant } = createOrGetPending('u6', 'User');
+    setTenantStatus(tenant.id, 'approved');
+    const a = createRule({
+      tenantId: tenant.id,
+      sourceGroupId: 'S1',
+      targets: ['D1'],
+      filterMode: 'all',
+    });
+    const b = createRule({
+      tenantId: tenant.id,
+      sourceGroupId: 'S2',
+      targets: ['D2'],
+      filterMode: 'all',
+    });
+    const c = createRule({
+      tenantId: tenant.id,
+      sourceGroupId: 'S3',
+      targets: ['D3'],
+      filterMode: 'all',
+    });
+    expect([a.id, b.id, c.id]).toEqual([1, 2, 3]);
+    deleteRule(2);
+    const reused = createRule({
+      tenantId: tenant.id,
+      sourceGroupId: 'S4',
+      targets: ['D4'],
+      filterMode: 'all',
+    });
+    expect(reused.id).toBe(2);
   });
 });
