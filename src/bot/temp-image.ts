@@ -1,20 +1,28 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
+import { getEnv } from '../config/env.js';
 import logger from '../config/logger.js';
 
 /**
- * Upload ảnh lên host tạm (HTTPS) — race vài host, lấy URL đầu tiên thành công.
+ * Upload anh len host tam (HTTPS) — race nhieu host.
+ * VPS thuong bi chan catbox/0x0 → uu tien telegra.ph + imgbb (neu co key).
  */
 export async function uploadTempImageUrl(filePath: string): Promise<string> {
   const buf = await readFile(filePath);
   if (buf.length === 0) throw new Error('QR file is empty');
   const filename = basename(filePath) || 'qr.png';
 
-  const attempts = [
-    withTimeout(uploadCatbox(buf, filename), 12_000, 'catbox'),
-    withTimeout(uploadLitterbox(buf, filename), 12_000, 'litterbox'),
-    withTimeout(uploadZeroXZero(buf, filename), 12_000, '0x0'),
+  const attempts: Array<Promise<string>> = [
+    withTimeout(uploadTelegraPh(buf, filename), 15_000, 'telegra'),
+    withTimeout(uploadCatbox(buf, filename), 15_000, 'catbox'),
+    withTimeout(uploadLitterbox(buf, filename), 15_000, 'litterbox'),
+    withTimeout(uploadZeroXZero(buf, filename), 15_000, '0x0'),
   ];
+
+  const imgbbKey = getEnv().IMGBB_API_KEY?.trim();
+  if (imgbbKey) {
+    attempts.unshift(withTimeout(uploadImgbb(buf, imgbbKey), 15_000, 'imgbb'));
+  }
 
   const errors: string[] = [];
   const result = await Promise.any(
@@ -50,7 +58,46 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-/** catbox.moe — thường nhanh hơn litterbox */
+async function uploadTelegraPh(buf: Buffer, filename: string): Promise<string> {
+  const form = new FormData();
+  form.append('file', pngBlob(buf), filename);
+  const res = await fetch('https://telegra.ph/upload', {
+    method: 'POST',
+    body: form,
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; zmf/0.1)' },
+  });
+  const json = (await res.json()) as Array<{ src?: string }> | { error?: string };
+  if (!res.ok || !Array.isArray(json) || !json[0]?.src) {
+    const detail =
+      typeof json === 'object' ? JSON.stringify(json).slice(0, 100) : String(res.status);
+    throw new Error(`telegra bad: ${detail}`);
+  }
+  const path = json[0].src;
+  const src = path.startsWith('http') ? path : `https://telegra.ph${path}`;
+  logger.info({ host: 'telegra.ph', src }, 'QR temp upload ok');
+  return src;
+}
+
+async function uploadImgbb(buf: Buffer, apiKey: string): Promise<string> {
+  const form = new FormData();
+  form.append('image', buf.toString('base64'));
+  const res = await fetch(`https://api.imgbb.com/1/upload?key=${encodeURIComponent(apiKey)}`, {
+    method: 'POST',
+    body: form,
+  });
+  const json = (await res.json()) as {
+    success?: boolean;
+    data?: { url?: string; display_url?: string };
+    error?: { message?: string };
+  };
+  const url = json.data?.display_url ?? json.data?.url;
+  if (!json.success || !url) {
+    throw new Error(`imgbb: ${json.error?.message ?? 'upload failed'}`);
+  }
+  logger.info({ host: 'imgbb' }, 'QR temp upload ok');
+  return url;
+}
+
 async function uploadCatbox(buf: Buffer, filename: string): Promise<string> {
   const form = new FormData();
   form.append('reqtype', 'fileupload');
@@ -58,6 +105,7 @@ async function uploadCatbox(buf: Buffer, filename: string): Promise<string> {
   const res = await fetch('https://catbox.moe/user/api.php', {
     method: 'POST',
     body: form,
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; zmf/0.1)' },
   });
   const text = (await res.text()).trim();
   if (!res.ok) throw new Error(`catbox HTTP ${res.status}: ${text.slice(0, 80)}`);
@@ -74,6 +122,7 @@ async function uploadLitterbox(buf: Buffer, filename: string): Promise<string> {
   const res = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
     method: 'POST',
     body: form,
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; zmf/0.1)' },
   });
   const text = (await res.text()).trim();
   if (!res.ok) throw new Error(`litterbox HTTP ${res.status}: ${text.slice(0, 80)}`);

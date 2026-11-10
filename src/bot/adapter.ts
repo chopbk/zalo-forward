@@ -76,21 +76,22 @@ export class ZaloBotControl {
     logger.info({ path }, 'Zalo bot webhook mounted');
   }
 
-  /** Serve QR images under /qr/:file */
+  /** Serve QR images under /qr/:file — Zalo fetch qua PUBLIC_BASE_URL */
   mountQrStatic(app: Express): void {
-    const qrDir = getEnv().QR_DIR;
+    const qrDir = resolvePath(getEnv().QR_DIR);
     app.get('/qr/:file', (req: Request, res: Response) => {
       const file = String(req.params.file ?? '').replace(/[^a-zA-Z0-9._-]/g, '');
       if (!file) {
         res.sendStatus(400);
         return;
       }
-      const full = `${qrDir}/${file}`;
-      if (!existsSync(full)) {
+      const full = resolvePath(qrDir, file);
+      if (!full.startsWith(qrDir) || !existsSync(full)) {
         res.sendStatus(404);
         return;
       }
-      res.type('png');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Type', 'image/png');
       createReadStream(full).pipe(res);
     });
   }
@@ -187,7 +188,7 @@ export class ZaloBotControl {
 
   /**
    * Gửi QR vào chat Zalo của user.
-   * Chốt: upload host tạm (catbox/…) → thử sendPhoto → luôn gửi kèm link HTTPS.
+   * VPS: ưu tiên PUBLIC_BASE_URL=https://domain (nginx) → host tạm → link text.
    */
   async sendPhoto(userId: string, filePath: string, caption?: string): Promise<void> {
     const absPath = resolvePath(filePath);
@@ -196,8 +197,26 @@ export class ZaloBotControl {
     const errors: string[] = [];
     let imageUrl: string | null = null;
 
-    // 1) Host tạm — ổn định trên VPS chỉ có IP, không cần domain
-    if (getEnv().QR_TEMP_UPLOAD) {
+    // 1) HTTPS tự host (khuyến nghị VPS)
+    try {
+      const base = await getPublicBaseUrl();
+      if (base) {
+        if (!/^https:\/\//i.test(base)) {
+          errors.push('PUBLIC_BASE_URL phải là https://... (không dùng http://IP)');
+          logger.warn({ base }, 'PUBLIC_BASE_URL is not HTTPS — skip');
+        } else {
+          imageUrl = qrFilePublicUrl(base, filePath);
+          await waitLocalQrReady(filePath, getEnv().PORT);
+          logger.info({ imageUrl }, 'QR URL from PUBLIC_BASE_URL');
+        }
+      }
+    } catch (err) {
+      errors.push(`public: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn({ err }, 'sendPhoto via public base failed');
+    }
+
+    // 2) Host tạm (telegra/imgbb/catbox…)
+    if (!imageUrl && getEnv().QR_TEMP_UPLOAD) {
       try {
         imageUrl = await uploadTempImageUrl(filePath);
       } catch (err) {
@@ -206,26 +225,14 @@ export class ZaloBotControl {
       }
     }
 
-    // 2) Dự phòng: PUBLIC_BASE_URL / localtunnel
-    if (!imageUrl) {
-      try {
-        const base = await getPublicBaseUrl();
-        if (base) {
-          imageUrl = qrFilePublicUrl(base, filePath);
-          await waitLocalQrReady(filePath, getEnv().PORT);
-        }
-      } catch (err) {
-        errors.push(`tunnel/public: ${err instanceof Error ? err.message : String(err)}`);
-        logger.warn({ err }, 'sendPhoto via public base failed');
-      }
-    }
-
     if (!imageUrl) {
       await this.sendText(
         userId,
         `${caption ? caption + '\n' : ''}` +
-          `Chưa gửi được QR.\n` +
-          `Bật QR_TEMP_UPLOAD=true hoặc kiểm tra mạng ra host tạm.\n` +
+          `Chưa gửi được QR trên VPS.\n` +
+          `Cách ổn định: domain + HTTPS, rồi set\n` +
+          `PUBLIC_BASE_URL=https://qr.domain-cua-ban.com\n` +
+          `Hoặc lấy key miễn phí imgbb.com → IMGBB_API_KEY=...\n` +
           `(${errors.join(' | ') || 'no url'})`,
       );
       return;
@@ -240,7 +247,6 @@ export class ZaloBotControl {
       logger.warn({ err, imageUrl }, 'sendPhoto by URL failed — vẫn gửi link');
     }
 
-    // Luôn gửi link host tạm để user mở trên điện thoại nếu ảnh không hiện
     await this.sendText(
       userId,
       `${photoOk ? 'Link QR (nếu ảnh không hiện):' : 'Mở link này trên điện thoại rồi quét QR:'}\n${imageUrl}`,

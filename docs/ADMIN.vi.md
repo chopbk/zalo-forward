@@ -8,7 +8,10 @@
 4. Chat với bot:
    - `/whoami` — xem Zalo user id của bạn (không bắt buộc)
    - `/iamadmin <mật_khẩu>` — nhận quyền admin, **id tự lưu vào DB**
-5. QR: giữ `QR_TEMP_UPLOAD=true` (mặc định) — bot up host tạm rồi gửi link, không cần domain.
+5. QR trên VPS (chọn 1):
+   - `PUBLIC_BASE_URL=https://qr.domain.com` + nginx SSL proxy `/qr/` → app
+   - hoặc `IMGBB_API_KEY=...` (tạo key miễn phí tại imgbb)
+   - Không dùng `http://IP` — Zalo Bot từ chối
 
 Không cần biết trước user id. `ADMIN_ZALO_USER_IDS` chỉ là tuỳ chọn seed.
 
@@ -34,7 +37,7 @@ Khi user gõ `/start`, admin nhận thông báo.
 
 1. `/login` — quét QR nick **phụ** (không mở Zalo Web song song)
 2. `/groups` — copy id group
-3. `/addrule` — wizard: nguồn → đích → tất cả / từ khóa
+3. `/addrule <nguồn> <đích,...> all` — xem `/help addrule`
 4. `/rules` — xem; `/rules off 1` tắt; `/rules del 1` xóa
 5. `/pause` / `/resume` — tạm dừng / bật lại
 
@@ -50,7 +53,7 @@ Khi user gõ `/start`, admin nhận thông báo.
 
 | Hiện tượng | Cách xử lý |
 |------------|------------|
-| QR không vào chat | `QR_TEMP_UPLOAD=true`; xem log temp upload; mở link host tạm trên điện thoại |
+| QR không vào chat (VPS) | Set `PUBLIC_BASE_URL=https://...` hoặc `IMGBB_API_KEY`. Xem log `temp host failed` / `sendPhoto`. Không dùng IP HTTP |
 | Listener dừng | Không mở Zalo Web cùng nick; `/logout` rồi `/login` |
 | Không forward | `/status` — approved? session active? relay on? `/addrule` đúng **id group** từ `/groups` (không phải chat 1-1 với bot Official)? |
 | Chỉ thấy tin của mình | Cần restart sau bản có `selfListen`; kiểm tra log `Enqueued forward jobs` có `sender` khác nhau |

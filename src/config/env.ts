@@ -23,20 +23,26 @@ const baseSchema = z.object({
   LIST_PAGE_SIZE: z.coerce.number().int().positive().default(20),
   PORT: z.coerce.number().int().positive().default(3080),
   LOG_LEVEL: z.string().default('info'),
+  /**
+   * HTTPS công khai (nginx/caddy) — khuyến nghị VPS.
+   * Ví dụ https://qr.domain.com — phải https, không dùng http://IP.
+   */
   PUBLIC_BASE_URL: z.string().optional(),
-  /** localtunnel khi thiếu PUBLIC_BASE_URL — chỉ dùng dev; VPS nên false */
+  /** API key imgbb.com (miễn phí) — upload QR ổn định khi VPS bị chặn host tạm */
+  IMGBB_API_KEY: z.string().optional().default(''),
+  /** localtunnel — chỉ dev local; VPS để false */
   QR_AUTO_TUNNEL: z
     .string()
     .optional()
     .default('false')
     .transform((v) => !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase())),
-  /** Upload QR lên host tạm (catbox/…) rồi gửi link — mặc định bật */
+  /** Upload QR host tạm (telegra/imgbb/catbox…) nếu chưa có PUBLIC_BASE_URL */
   QR_TEMP_UPLOAD: z
     .string()
     .optional()
     .default('true')
     .transform((v) => !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase())),
-  /** Mở Preview local (chỉ hữu ích khi admin login trên chính máy server) */
+  /** Mở Preview local (chỉ khi admin login trên chính máy server) */
   QR_OPEN_LOCAL: z
     .string()
     .optional()

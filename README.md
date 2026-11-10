@@ -38,7 +38,7 @@ Xem [`.env.example`](./.env.example). Bắt buộc:
 
 Tuỳ chọn: `ADMIN_ZALO_USER_IDS` nếu đã biết sẵn id.
 
-QR login: bot upload ảnh lên host tạm (`QR_TEMP_UPLOAD=true`, catbox/…) rồi **gửi ảnh + link** vào chat. Không cần domain/HTTPS trên VPS. `PUBLIC_BASE_URL` / tunnel chỉ là dự phòng.
+QR login trên **VPS**: Zalo cần URL **HTTPS**. Khuyên dùng `PUBLIC_BASE_URL=https://domain` (nginx + SSL) hoặc `IMGBB_API_KEY`. Không dùng `http://IP`. Fallback: telegra/catbox (`QR_TEMP_UPLOAD=true`).
 
 ## Scripts
 
