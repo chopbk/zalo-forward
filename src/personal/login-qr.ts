@@ -28,9 +28,38 @@ export type QrLoginCallbacks = {
   onError?: (err: unknown) => void | Promise<void>;
 };
 
+type ActiveQrLogin = {
+  abort: () => void;
+};
+
+const activeQrLogins = new Map<number, ActiveQrLogin>();
+
+/** Có phiên /login QR đang chờ quét không. */
+export function isQrLoginActive(tenantId: number): boolean {
+  return activeQrLogins.has(tenantId);
+}
+
+/**
+ * Hủy phiên QR login đang chạy (/stop).
+ * @returns true nếu có phiên bị dừng.
+ */
+export function stopQrLogin(tenantId: number): boolean {
+  const active = activeQrLogins.get(tenantId);
+  if (!active) return false;
+  try {
+    active.abort();
+  } catch (err) {
+    logger.warn({ err, tenantId }, 'QR login abort threw');
+  }
+  activeQrLogins.delete(tenantId);
+  logger.info({ tenantId }, 'QR login stopped by user');
+  return true;
+}
+
 /**
  * Start QR login for a tenant. Resolves when GotLoginInfo saved, or rejects on hard fail.
  * QR hết hạn chỉ auto-retry tới MAX_QR_SENDS lần gửi ảnh — tránh spam khi user không quét.
+ * Gõ /stop để abort sớm.
  */
 export async function startQrLogin(
   tenantId: number,
@@ -41,15 +70,51 @@ export async function startQrLogin(
   const qrPath = join(env.QR_DIR, `tenant-${tenantId}.png`);
   const sessionPath = sessionPathForTenant(tenantId);
 
+  // /login lại trong lúc đang chờ → dừng phiên cũ trước
+  if (activeQrLogins.has(tenantId)) {
+    stopQrLogin(tenantId);
+  }
+
   const zalo = new Zalo({ imageMetadataGetter });
   let saved = false;
   let qrSends = 0;
+  let stopped = false;
+
+  const clearActive = (): void => {
+    const cur = activeQrLogins.get(tenantId);
+    if (cur) activeQrLogins.delete(tenantId);
+  };
+
+  const rememberAbort = (abortFn: () => void): void => {
+    activeQrLogins.set(tenantId, {
+      abort: () => {
+        stopped = true;
+        abortFn();
+      },
+    });
+  };
 
   const api = await zalo.loginQR({}, (event) => {
+    if (stopped) {
+      clearActive();
+      try {
+        event.actions.abort();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    if ('actions' in event && typeof event.actions.abort === 'function') {
+      rememberAbort(event.actions.abort);
+    }
+
     switch (event.type) {
       case LoginQRCallbackEventType.QRCodeGenerated:
         qrSends += 1;
-        void event.actions.saveToFile(qrPath).then(() => cbs.onQrReady(qrPath, qrSends));
+        void event.actions.saveToFile(qrPath).then(() => {
+          if (stopped) return;
+          return cbs.onQrReady(qrPath, qrSends);
+        });
         break;
       case LoginQRCallbackEventType.QRCodeScanned:
         void cbs.onScanned?.(event.data.display_name);
@@ -65,14 +130,17 @@ export async function startQrLogin(
           event.actions.retry();
         } else {
           logger.info({ tenantId, qrSends }, 'QR login stopped after max sends');
+          clearActive();
           event.actions.abort();
         }
         break;
       }
       case LoginQRCallbackEventType.QRCodeDeclined:
+        clearActive();
         void cbs.onDeclined?.();
         break;
       case LoginQRCallbackEventType.GotLoginInfo:
+        clearActive();
         void (async () => {
           try {
             const session: ZaloSessionFile = {
@@ -103,6 +171,7 @@ export async function startQrLogin(
   });
 
   if (!api) {
+    clearActive();
     throw new Error('Login QR failed');
   }
 
@@ -115,7 +184,7 @@ export async function startQrLogin(
   }
 
   if (!saved) {
-    // QR flow continues asynchronously via callbacks until success/decline;
+    // QR flow continues asynchronously via callbacks until success/decline/stop;
     // do not throw — user still scanning.
     logger.info({ tenantId }, 'QR login waiting for scan');
   }

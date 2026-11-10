@@ -19,7 +19,7 @@ import {
   updateRule,
   upsertRuleBySource,
 } from '../db/rules.js';
-import { MAX_QR_SENDS, startQrLogin } from '../personal/login-qr.js';
+import { MAX_QR_SENDS, startQrLogin, stopQrLogin } from '../personal/login-qr.js';
 import { sessionManager } from '../personal/manager.js';
 import { detectSimpleCycles } from '../relay/match.js';
 import type { ZaloBotControl, BotInbound } from './adapter.js';
@@ -221,6 +221,7 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
   const gate = requireApproved(zaloUserId);
   if (
     text === '/login' ||
+    text === '/stop' ||
     text === '/logout' ||
     text === '/groups' ||
     text === '/addrule' ||
@@ -247,19 +248,33 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
   if (!gate.ok) return;
   const tenant = gate.tenant;
 
+  if (text === '/stop') {
+    const stopped = stopQrLogin(tenant.id);
+    if (stopped) {
+      upsertSession(tenant.id, {
+        status: 'error',
+        lastError: 'QR login stopped by /stop',
+      });
+      await bot.sendText(zaloUserId, 'Đã dừng login QR. Gõ /login khi sẵn sàng.');
+    } else {
+      await bot.sendText(zaloUserId, 'Không có phiên login QR đang chạy.');
+    }
+    return;
+  }
+
   if (text === '/login') {
     upsertSession(tenant.id, { status: 'qr_pending', lastError: null });
     await bot.sendText(
       zaloUserId,
-      'Đang tạo QR đăng nhập Zalo cá nhân...\nDùng nick phụ. Không mở Zalo Web song song.',
+      'Đang tạo QR đăng nhập Zalo cá nhân...\nDùng nick phụ. Không mở Zalo Web song song.\nGõ /stop để tạm dừng.',
     );
     try {
       await startQrLogin(tenant.id, {
         onQrReady: async (qrPath, attempt) => {
           const caption =
             attempt <= 1
-              ? 'Quét QR bằng Zalo trên điện thoại.'
-              : `QR mới (${attempt}/${MAX_QR_SENDS}) — quét bằng Zalo trên điện thoại.`;
+              ? 'Quét QR bằng Zalo trên điện thoại.\n(/stop để dừng)'
+              : `QR mới (${attempt}/${MAX_QR_SENDS}) — quét bằng Zalo trên điện thoại.\n(/stop để dừng)`;
           await bot.sendPhoto(zaloUserId, qrPath, caption);
         },
         onScanned: async (name) => {
@@ -269,7 +284,7 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
           if (willRetry) {
             await bot.sendText(
               zaloUserId,
-              `QR hết hạn — đang tạo mã mới (${attempt}/${maxAttempts})...`,
+              `QR hết hạn — đang tạo mã mới (${attempt}/${maxAttempts})...\nGõ /stop để tạm dừng.`,
             );
             return;
           }

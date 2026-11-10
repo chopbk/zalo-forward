@@ -3,6 +3,7 @@ export const USER_HELP = `Zalo Message Forward — lệnh chính
 Setup:
 1) /start — đăng ký (chờ admin duyệt)
 2) /login — quét QR nick Zalo (nên nick phụ)
+   /stop — tạm dừng login QR đang chờ quét
 3) /groups — lấy id group
 4) /addrule ... — tạo luật (1 lệnh)
 5) /rules — xem / sửa / bật / tắt / xóa
@@ -26,6 +27,7 @@ Lệnh khác:
 /rules on|off|del <id>
 /keywords <id_luật> <từ_khóa,...>
 /pause | /resume
+/stop — dừng /login QR đang chờ
 /logout
 /whoami
 /iamadmin <mật_khẩu>
