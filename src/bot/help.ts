@@ -1,77 +1,60 @@
 export const USER_HELP = `Zalo Message Forward — lệnh chính
 
-Làm lần lượt:
+Setup:
 1) /start — đăng ký (chờ admin duyệt)
-2) /login — quét QR nick Zalo cá nhân (nên dùng nick phụ)
-3) /groups — xem id các group
-4) /addrule — tạo luật chuyển tiếp (wizard từng bước)
-5) /rules — xem / bật / tắt / xóa luật
+2) /login — quét QR nick Zalo (nên nick phụ)
+3) /groups — lấy id group
+4) /addrule ... — tạo luật (1 lệnh)
+5) /rules — xem / bật / tắt / xóa
+
+/addrule (format đầy đủ):
+/addrule <id_nguồn> <id_đích,...> all
+/addrule <id_nguồn> <id_đích,...> keywords <từ_khóa,...>
+
+Ví dụ:
+/addrule 9045111 9045222,9045333 all
+/addrule 9045111 9045222,9045333 keywords sale,hot
+
+Chi tiết: /help addrule
 
 Lệnh khác:
-/status — trạng thái duyệt + session + số luật
-/keywords — thêm từ khóa cho luật đã có
-/pause | /resume — tắt / bật chuyển tiếp
-/logout — đăng xuất nick cá nhân
-/cancel — hủy wizard đang làm
-/whoami — xem Zalo user id của bạn
-/iamadmin <mật khẩu> — nhận quyền admin (lần đầu)
-/help — menu này
-/help addrule — hướng dẫn /addrule CHI TIẾT
+/status
+/rules on|off|del <id>
+/keywords <id_luật> <từ_khóa,...>
+/pause | /resume
+/logout
+/whoami
+/iamadmin <mật_khẩu>
+/help
 
 Lưu ý: automation Zalo không chính thức — rủi ro hạn chế nick.`;
 
-/** Chi tiết wizard /addrule — gửi riêng vì dài */
-export const ADD_RULE_HELP = `Hướng dẫn /addrule (chi tiết)
+export const ADD_RULE_HELP = `Hướng dẫn /addrule — 1 lệnh duy nhất
 
-Mục tiêu: tin từ 1 group NGUỒN → nhiều group ĐÍCH.
+Format:
+/addrule <id_nguồn> <id_đích1,id_đích2,...> all
+/addrule <id_nguồn> <id_đích1,id_đích2,...> keywords <kw1,kw2,...>
 
-Ví dụ:
-  Group A (id 111) → Group 1 (222), Group 2 (333)
-  Chỉ forward tin có chữ "sale" hoặc "hot"
+Tham số:
+• id_nguồn — 1 group (lấy từ /groups)
+• id_đích — một hoặc nhiều, cách nhau dấu phẩy (không trùng nguồn)
+• all — forward mọi tin text/ảnh/link
+• keywords — chỉ tin chứa ≥1 từ khóa (không phân biệt hoa thường)
 
-——— Chuẩn bị ———
-1. /login thành công
-2. /groups → copy đúng id (chuỗi số dài), ví dụ:
-   1. Team Sale — id=9045123456789012345
-   2. Group KH — id=9045987654321098765
+Ví dụ 1 — forward tất cả từ A sang 1 và 2:
+/addrule 9045123456789012345 9045987654321098765,9045111222333444555 all
 
-——— Cách dùng ———
-Gõ: /addrule
-Bot hỏi từng bước — bạn trả lời tin nhắn thường (không cần /):
+Ví dụ 2 — chỉ tin có "sale" hoặc "hot":
+/addrule 9045123456789012345 9045987654321098765 keywords sale,hot
 
-Bước 1 — Group NGUỒN
-  Gửi 1 id, ví dụ:
-  9045123456789012345
+Sau khi tạo:
+/rules — liệt kê
+/rules off 3 | /rules on 3 | /rules del 3
+/keywords 3 deal,vip — thêm từ khóa cho luật #3
 
-Bước 2 — Group ĐÍCH
-  Một hoặc nhiều id, cách nhau bằng dấu phẩy:
-  9045987654321098765,9045111222333444555
-  (không gửi trùng id nguồn)
-
-Bước 3 — Kiểu lọc
-  Trả lời số:
-  1 = tất cả tin (text/ảnh/link)
-  2 = chỉ tin khớp từ khóa
-
-Bước 4 — (chỉ khi chọn 2) Từ khóa
-  Cách nhau bằng dấu phẩy, không phân biệt hoa thường:
-  sale, hot, giảm giá
-
-Bước 5 — Xác nhận
-  ok = lưu luật
-  không = hủy
-
-——— Sau khi tạo ———
-/rules — xem danh sách (#id luật)
-/rules off 3 — tắt luật #3
-/rules on 3 — bật lại
-/rules del 3 — xóa luật #3
-/keywords — thêm từ khóa cho luật đã có
-
-——— Mẹo ———
-/cancel — hủy giữa chừng
-Muốn nhiều nguồn: chạy /addrule nhiều lần (mỗi lần 1 nguồn)
-Tránh tạo A→B và B→A (dễ vòng lặp; bot sẽ cảnh báo)`;
+Mẹo:
+• Nhiều nguồn = gọi /addrule nhiều lần
+• Tránh A→B và B→A (vòng lặp; bot cảnh báo)`;
 
 export const ADMIN_HELP = `Lệnh admin:
 /pending — chờ duyệt
@@ -83,14 +66,3 @@ export const ADMIN_HELP = `Lệnh admin:
 /admins — danh sách admin (DB)
 /revokeadmin <zalo_user_id> — gỡ admin DB
 /adminhelp — trợ giúp admin`;
-
-/** Prompt mở wizard /addrule */
-export const ADDRULE_START = `Thêm luật chuyển tiếp (wizard)
-
-Ví dụ: Group A → Group 1,2,3
-
-Bước 1/5 — Gửi ID group NGUỒN
-(Lấy từ /groups — chỉ gửi 1 id, ví dụ: 9045123456789012345)
-
-Gõ /cancel để hủy.
-Chi tiết đầy đủ: /help addrule`;

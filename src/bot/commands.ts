@@ -9,6 +9,8 @@ import {
   upsertSession,
 } from '../db/tenants.js';
 import {
+  addKeywords,
+  createRule,
   deleteRule,
   getRule,
   listGroupCache,
@@ -17,16 +19,16 @@ import {
 } from '../db/rules.js';
 import { startQrLogin } from '../personal/login-qr.js';
 import { sessionManager } from '../personal/manager.js';
+import { detectSimpleCycles } from '../relay/match.js';
 import type { ZaloBotControl, BotInbound } from './adapter.js';
 import { handleAdminCommand } from './admin.js';
 import {
   clearConversation,
   getConversation,
   handleConversationReply,
-  startAddRuleFlow,
-  startKeywordsFlow,
 } from './flows.js';
-import { ADD_RULE_HELP, ADDRULE_START, ADMIN_HELP, USER_HELP } from './help.js';
+import { ADD_RULE_HELP, ADMIN_HELP, USER_HELP } from './help.js';
+import { ADDRULE_USAGE, parseAddRuleCommand } from './parse-addrule.js';
 
 function requireApproved(zaloUserId: string) {
   const tenant = findTenantByBotUserId(zaloUserId);
@@ -203,9 +205,11 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     text === '/logout' ||
     text === '/groups' ||
     text === '/addrule' ||
+    text.startsWith('/addrule ') ||
     text === '/rules' ||
     text.startsWith('/rules ') ||
     text === '/keywords' ||
+    text.startsWith('/keywords ') ||
     text === '/pause' ||
     text === '/resume'
   ) {
@@ -342,14 +346,44 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     return;
   }
 
-  if (text === '/addrule') {
+  if (text === '/addrule' || text.startsWith('/addrule ')) {
     const session = getSession(tenant.id);
     if (session?.status !== 'active') {
       await bot.sendText(zaloUserId, 'Cần /login trước.\nXem /help addrule');
       return;
     }
-    startAddRuleFlow(zaloUserId);
-    await bot.sendText(zaloUserId, ADDRULE_START);
+    const parsed = parseAddRuleCommand(text);
+    if ('error' in parsed) {
+      await bot.sendText(zaloUserId, parsed.error);
+      return;
+    }
+    try {
+      const rule = createRule({
+        tenantId: tenant.id,
+        sourceGroupId: parsed.sourceGroupId,
+        targets: parsed.targets,
+        filterMode: parsed.filterMode,
+        keywords: parsed.keywords,
+      });
+      const cycles = detectSimpleCycles(
+        listRules(tenant.id).map((r) => ({
+          sourceGroupId: r.sourceGroupId,
+          targets: r.targets,
+        })),
+      );
+      let msg =
+        `Đã tạo luật #${rule.id}\n` +
+        `${rule.sourceGroupId} → ${rule.targets.join(', ')}\n` +
+        `Lọc: ${rule.filterMode}` +
+        (rule.filterMode === 'keywords' ? ` [${rule.keywords.join(', ')}]` : '');
+      if (cycles.length) msg += `\n⚠️ Cảnh báo vòng lặp: ${cycles.join('; ')}`;
+      await bot.sendText(zaloUserId, msg);
+    } catch (err) {
+      await bot.sendText(
+        zaloUserId,
+        `Lỗi: ${err instanceof Error ? err.message : String(err)}\n\n${ADDRULE_USAGE}`,
+      );
+    }
     return;
   }
 
@@ -405,9 +439,31 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     return;
   }
 
-  if (text === '/keywords') {
-    startKeywordsFlow(zaloUserId);
-    await bot.sendText(zaloUserId, 'Gửi id luật cần thêm từ khóa (xem /rules).');
+  if (text === '/keywords' || text.startsWith('/keywords ')) {
+    const rest = text.replace(/^\/keywords\s*/i, '').trim();
+    const m = rest.match(/^(\d+)\s+(.+)$/);
+    if (!m) {
+      await bot.sendText(
+        zaloUserId,
+        'Format: /keywords <id_luật> <từ_khóa,...>\nVí dụ: /keywords 3 sale,hot\nXem id: /rules',
+      );
+      return;
+    }
+    const ruleId = Number(m[1]);
+    const kws = m[2]!
+      .split(/[,;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const rule = getRule(ruleId);
+    if (!rule || rule.tenantId !== tenant.id) {
+      await bot.sendText(zaloUserId, 'Không tìm thấy luật.');
+      return;
+    }
+    const updated = addKeywords(ruleId, kws);
+    await bot.sendText(
+      zaloUserId,
+      `Đã cập nhật keywords luật #${ruleId}: ${updated?.keywords.join(', ') ?? ''}`,
+    );
     return;
   }
 
