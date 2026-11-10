@@ -34,9 +34,11 @@ export async function handleConversationReply(
       const name = getGroupName(tenant.id, source);
       await bot.sendText(
         tenant.zaloBotUserId,
-        `Nguồn: ${name ? `${name} (${source})` : source}\n` +
-          `Gửi id group đích (nhiều id cách nhau dấu phẩy).\n` +
-          `Xem /groups. Gõ /cancel để hủy.`,
+        `Nguồn: ${name ? `${name} (${source})` : source}\n\n` +
+          `Bước 2/5 — Gửi ID group ĐÍCH\n` +
+          `Một hoặc nhiều id, cách nhau dấu phẩy.\n` +
+          `Ví dụ: 9045987654321098765,9045111222333444555\n` +
+          `(xem /groups). /cancel để hủy.`,
       );
       return true;
     }
@@ -56,7 +58,10 @@ export async function handleConversationReply(
       });
       await bot.sendText(
         tenant.zaloBotUserId,
-        'Chọn lọc tin:\n1 — tất cả tin\n2 — theo từ khóa\n\nTrả lời 1 hoặc 2.',
+        'Bước 3/5 — Chọn lọc tin\n' +
+          '1 = forward tất cả tin (text/ảnh/link)\n' +
+          '2 = chỉ tin có từ khóa\n\n' +
+          'Chỉ trả lời: 1 hoặc 2',
       );
       return true;
     }
@@ -80,7 +85,9 @@ export async function handleConversationReply(
         setConversation(tenant.zaloBotUserId, 'addrule_keywords', { ...conv.data });
         await bot.sendText(
           tenant.zaloBotUserId,
-          'Gửi từ khóa, cách nhau dấu phẩy (ví dụ: sale, giảm giá, hot).',
+          'Bước 4/5 — Gửi từ khóa\n' +
+            'Cách nhau dấu phẩy, không phân biệt hoa thường.\n' +
+            'Ví dụ: sale, hot, giảm giá',
         );
         return true;
       }
@@ -202,14 +209,14 @@ async function sendConfirm(
 ): Promise<void> {
   const srcName = getGroupName(tenant.id, draft.sourceGroupId);
   const lines = [
-    'Xác nhận tạo luật:',
+    'Bước 5/5 — Xác nhận tạo luật',
     `Nguồn: ${srcName ?? draft.sourceGroupId} (${draft.sourceGroupId})`,
     `Đích: ${draft.targets.join(', ')}`,
     `Lọc: ${draft.filterMode}${
       draft.filterMode === 'keywords' ? ` [${draft.keywords.join(', ')}]` : ''
     }`,
     '',
-    'Trả lời ok để lưu, không để hủy.',
+    'Trả lời: ok = lưu | không = hủy',
   ];
   await bot.sendText(tenant.zaloBotUserId, lines.join('\n'));
 }

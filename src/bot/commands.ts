@@ -26,7 +26,7 @@ import {
   startAddRuleFlow,
   startKeywordsFlow,
 } from './flows.js';
-import { ADMIN_HELP, USER_HELP } from './help.js';
+import { ADD_RULE_HELP, ADDRULE_START, ADMIN_HELP, USER_HELP } from './help.js';
 
 function requireApproved(zaloUserId: string) {
   const tenant = findTenantByBotUserId(zaloUserId);
@@ -152,7 +152,12 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     return;
   }
 
-  if (text === '/help') {
+  if (text === '/help' || text.startsWith('/help ')) {
+    const topic = text.slice('/help'.length).trim().toLowerCase();
+    if (topic === 'addrule' || topic === 'rule' || topic === 'rules') {
+      await bot.sendText(zaloUserId, ADD_RULE_HELP);
+      return;
+    }
     let help = USER_HELP;
     if (isAdmin(zaloUserId)) help += `\n\n${ADMIN_HELP}`;
     await bot.sendText(zaloUserId, help);
@@ -336,14 +341,11 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
   if (text === '/addrule') {
     const session = getSession(tenant.id);
     if (session?.status !== 'active') {
-      await bot.sendText(zaloUserId, 'Cần /login trước.');
+      await bot.sendText(zaloUserId, 'Cần /login trước.\nXem /help addrule');
       return;
     }
     startAddRuleFlow(zaloUserId);
-    await bot.sendText(
-      zaloUserId,
-      'Thêm luật chuyển tiếp.\nGửi id group NGUỒN (xem /groups).\n/cancel để hủy.',
-    );
+    await bot.sendText(zaloUserId, ADDRULE_START);
     return;
   }
 
