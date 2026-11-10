@@ -49,7 +49,7 @@ Khi user gõ `/start`, admin nhận thông báo.
 
 | Hiện tượng | Cách xử lý |
 |------------|------------|
-| QR không hiện trong chat | Bình thường — bot **mở PNG trên máy chạy bot**; quét cửa sổ đó. Muốn ảnh trong chat: set `PUBLIC_BASE_URL` (ngrok) |
+| QR không vào chat | Cần HTTPS: set `PUBLIC_BASE_URL` (ngrok) hoặc để `QR_AUTO_TUNNEL=true`. Fallback `QR_TEMP_UPLOAD` / link trong tin nhắn |
 | Listener dừng | Không mở Zalo Web cùng nick; `/logout` rồi `/login` |
 | Không forward | `/status` — approved? session active? relay on? có rule đúng nguồn? |
 | Gần bị limit | Tăng `ZALO_MIN_SEND_INTERVAL_MS`, giảm `ZALO_SEND_MAX_PER_MINUTE` |

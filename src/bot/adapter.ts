@@ -5,6 +5,7 @@ import { getEnv } from '../config/env.js';
 import logger from '../config/logger.js';
 import { SendQueue } from '../relay/queue.js';
 import { openLocalFile } from './open-local.js';
+import { getPublicBaseUrl, qrFilePublicUrl } from './public-base.js';
 import { uploadTempImageUrl } from './temp-image.js';
 
 export type BotInbound = {
@@ -185,52 +186,60 @@ export class ZaloBotControl {
   }
 
   /**
-   * Gửi / hiện QR đăng nhập.
-   * Zalo Bot sendPhoto chỉ nhận HTTPS URL — mặc định mở PNG trên máy chạy bot (nhanh, ổn định).
-   * Tuỳ chọn: PUBLIC_BASE_URL hoặc QR_TEMP_UPLOAD=true.
+   * Gửi QR vào chat Zalo của user (bắt buộc cho multi-tenant).
+   * sendPhoto chỉ nhận HTTPS URL → PUBLIC_BASE_URL / auto-tunnel / host tạm;
+   * nếu gửi ảnh fail vẫn gửi link HTTPS để user mở trên điện thoại.
    */
   async sendPhoto(userId: string, filePath: string, caption?: string): Promise<void> {
     const absPath = resolvePath(filePath);
-    openLocalFile(absPath);
+    if (getEnv().QR_OPEN_LOCAL) openLocalFile(absPath);
 
-    const publicUrl = publicQrUrl(filePath);
-    if (publicUrl) {
+    const errors: string[] = [];
+    let imageUrl: string | null = null;
+
+    // 1) PUBLIC_BASE_URL hoặc localtunnel → /qr/file
+    try {
+      const base = await getPublicBaseUrl();
+      if (base) {
+        imageUrl = qrFilePublicUrl(base, filePath);
+        // Đảm bảo file đã sẵn sàng trên HTTP local trước khi Zalo fetch
+        await waitLocalQrReady(filePath, getEnv().PORT);
+        await this.sendPhotoByUrl(userId, imageUrl, caption);
+        return;
+      }
+    } catch (err) {
+      errors.push(`tunnel/public: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn({ err }, 'sendPhoto via public base failed');
+    }
+
+    // 2) Host tạm (catbox race…)
+    if (getEnv().QR_TEMP_UPLOAD) {
       try {
-        await this.sendPhotoByUrl(userId, publicUrl, caption);
-        await this.sendText(
-          userId,
-          'Đã gửi ảnh QR vào chat. Nếu không thấy, xem cửa sổ vừa mở trên máy chạy bot.',
-        );
+        imageUrl = await uploadTempImageUrl(filePath);
+        await this.sendPhotoByUrl(userId, imageUrl, caption);
         return;
       } catch (err) {
-        logger.warn({ err, publicUrl }, 'sendPhoto via PUBLIC_BASE_URL failed');
+        errors.push(`temp: ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn({ err }, 'sendPhoto via temp host failed');
       }
     }
 
-    if (getEnv().QR_TEMP_UPLOAD) {
-      try {
-        const tempUrl = await Promise.race([
-          uploadTempImageUrl(filePath),
-          new Promise<string>((_, reject) =>
-            setTimeout(() => reject(new Error('temp host timeout 8s')), 8000),
-          ),
-        ]);
-        await this.sendPhotoByUrl(
-          userId,
-          tempUrl,
-          (caption ? caption + '\n' : '') + 'Quét ngay.',
-        );
-        return;
-      } catch (err) {
-        logger.warn({ err }, 'temp host QR skipped');
-      }
+    // 3) Còn URL thì gửi link — user mở trên điện thoại rồi quét
+    if (imageUrl) {
+      await this.sendText(
+        userId,
+        `${caption ? caption + '\n' : ''}` +
+          `Không gửi được ảnh trực tiếp. Mở link này trên điện thoại rồi quét QR:\n${imageUrl}`,
+      );
+      return;
     }
 
     await this.sendText(
       userId,
       `${caption ? caption + '\n' : ''}` +
-        `QR đã mở trên máy chạy bot — đưa điện thoại quét cửa sổ/ảnh đó.\n` +
-        `File: ${absPath}`,
+        `Chưa gửi được QR vào chat.\n` +
+        `Thử set PUBLIC_BASE_URL=https://... (ngrok) hoặc kiểm tra mạng.\n` +
+        `(${errors.join(' | ') || 'no url'})`,
     );
   }
 
@@ -278,6 +287,21 @@ export class ZaloBotControl {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Chờ HTTP local phục vụ được file QR (tránh Zalo fetch 404). */
+async function waitLocalQrReady(filePath: string, port: number): Promise<void> {
+  const file = basename(filePath).replace(/[^a-zA-Z0-9._-]/g, '');
+  const url = `http://127.0.0.1:${port}/qr/${file}`;
+  for (let i = 0; i < 10; i++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {
+      // retry
+    }
+    await sleep(150);
+  }
 }
 
 /** Build public HTTPS URL for a QR file under /qr/:file when PUBLIC_BASE_URL is set. */

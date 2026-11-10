@@ -24,11 +24,20 @@ const baseSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3080),
   LOG_LEVEL: z.string().default('info'),
   PUBLIC_BASE_URL: z.string().optional(),
-  /**
-   * Upload QR lên host tạm để gửi ảnh qua bot. Mặc định tắt (host ngoài thường chậm).
-   * Cách mặc định: mở PNG trên máy chạy bot.
-   */
+  /** Tự mở localtunnel khi thiếu PUBLIC_BASE_URL — để Zalo fetch /qr/... */
+  QR_AUTO_TUNNEL: z
+    .string()
+    .optional()
+    .default('true')
+    .transform((v) => !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase())),
+  /** Fallback upload host tạm (catbox/…) nếu tunnel/public fail */
   QR_TEMP_UPLOAD: z
+    .string()
+    .optional()
+    .default('true')
+    .transform((v) => !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase())),
+  /** Mở Preview local (chỉ hữu ích khi admin login trên chính máy server) */
+  QR_OPEN_LOCAL: z
     .string()
     .optional()
     .default('false')

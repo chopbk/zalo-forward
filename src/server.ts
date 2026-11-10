@@ -5,6 +5,7 @@ import logger from './config/logger.js';
 import { getDb } from './db/client.js';
 import { ZaloBotControl } from './bot/adapter.js';
 import { wireBotCommands } from './bot/commands.js';
+import { closePublicTunnel } from './bot/public-base.js';
 import { sessionManager } from './personal/manager.js';
 import {
   handleGroupInbound,
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutting down');
     stopJobWorker();
+    closePublicTunnel();
     await sessionManager.stopAll();
     await bot.stop();
     process.exit(0);
