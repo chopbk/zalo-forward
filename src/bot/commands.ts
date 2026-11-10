@@ -19,7 +19,7 @@ import {
   updateRule,
   upsertRuleBySource,
 } from '../db/rules.js';
-import { startQrLogin } from '../personal/login-qr.js';
+import { MAX_QR_SENDS, startQrLogin } from '../personal/login-qr.js';
 import { sessionManager } from '../personal/manager.js';
 import { detectSimpleCycles } from '../relay/match.js';
 import type { ZaloBotControl, BotInbound } from './adapter.js';
@@ -255,14 +255,32 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     );
     try {
       await startQrLogin(tenant.id, {
-        onQrReady: async (qrPath) => {
-          await bot.sendPhoto(zaloUserId, qrPath, 'Quét QR bằng Zalo trên điện thoại.');
+        onQrReady: async (qrPath, attempt) => {
+          const caption =
+            attempt <= 1
+              ? 'Quét QR bằng Zalo trên điện thoại.'
+              : `QR mới (${attempt}/${MAX_QR_SENDS}) — quét bằng Zalo trên điện thoại.`;
+          await bot.sendPhoto(zaloUserId, qrPath, caption);
         },
         onScanned: async (name) => {
           await bot.sendText(zaloUserId, `Đã quét (${name ?? 'ok'}) — đang xác nhận...`);
         },
-        onExpired: async () => {
-          await bot.sendText(zaloUserId, 'QR hết hạn — đang tạo mã mới...');
+        onExpired: async ({ willRetry, attempt, maxAttempts }) => {
+          if (willRetry) {
+            await bot.sendText(
+              zaloUserId,
+              `QR hết hạn — đang tạo mã mới (${attempt}/${maxAttempts})...`,
+            );
+            return;
+          }
+          upsertSession(tenant.id, {
+            status: 'error',
+            lastError: `QR expired after ${maxAttempts} sends`,
+          });
+          await bot.sendText(
+            zaloUserId,
+            `Đã gửi QR ${maxAttempts} lần mà chưa quét. Dừng lại — gõ /login khi sẵn sàng.`,
+          );
         },
         onDeclined: async () => {
           upsertSession(tenant.id, { status: 'error', lastError: 'QR declined' });

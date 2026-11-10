@@ -10,10 +10,19 @@ import {
   type ZaloSessionFile,
 } from './session.js';
 
+/** Số lần gửi ảnh QR tối đa mỗi lần /login (kể cả mã đầu). */
+export const MAX_QR_SENDS = 3;
+
+export type QrExpiredInfo = {
+  attempt: number;
+  maxAttempts: number;
+  willRetry: boolean;
+};
+
 export type QrLoginCallbacks = {
-  onQrReady: (qrFilePath: string) => void | Promise<void>;
+  onQrReady: (qrFilePath: string, attempt: number) => void | Promise<void>;
   onScanned?: (displayName?: string) => void | Promise<void>;
-  onExpired?: () => void | Promise<void>;
+  onExpired?: (info: QrExpiredInfo) => void | Promise<void>;
   onDeclined?: () => void | Promise<void>;
   onSuccess: (session: ZaloSessionFile, path: string, ownId: string) => void | Promise<void>;
   onError?: (err: unknown) => void | Promise<void>;
@@ -21,6 +30,7 @@ export type QrLoginCallbacks = {
 
 /**
  * Start QR login for a tenant. Resolves when GotLoginInfo saved, or rejects on hard fail.
+ * QR hết hạn chỉ auto-retry tới MAX_QR_SENDS lần gửi ảnh — tránh spam khi user không quét.
  */
 export async function startQrLogin(
   tenantId: number,
@@ -33,19 +43,32 @@ export async function startQrLogin(
 
   const zalo = new Zalo({ imageMetadataGetter });
   let saved = false;
+  let qrSends = 0;
 
   const api = await zalo.loginQR({}, (event) => {
     switch (event.type) {
       case LoginQRCallbackEventType.QRCodeGenerated:
-        void event.actions.saveToFile(qrPath).then(() => cbs.onQrReady(qrPath));
+        qrSends += 1;
+        void event.actions.saveToFile(qrPath).then(() => cbs.onQrReady(qrPath, qrSends));
         break;
       case LoginQRCallbackEventType.QRCodeScanned:
         void cbs.onScanned?.(event.data.display_name);
         break;
-      case LoginQRCallbackEventType.QRCodeExpired:
-        void cbs.onExpired?.();
-        event.actions.retry();
+      case LoginQRCallbackEventType.QRCodeExpired: {
+        const willRetry = qrSends < MAX_QR_SENDS;
+        void cbs.onExpired?.({
+          attempt: qrSends,
+          maxAttempts: MAX_QR_SENDS,
+          willRetry,
+        });
+        if (willRetry) {
+          event.actions.retry();
+        } else {
+          logger.info({ tenantId, qrSends }, 'QR login stopped after max sends');
+          event.actions.abort();
+        }
         break;
+      }
       case LoginQRCallbackEventType.QRCodeDeclined:
         void cbs.onDeclined?.();
         break;
