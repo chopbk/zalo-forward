@@ -24,6 +24,15 @@ const baseSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3080),
   LOG_LEVEL: z.string().default('info'),
   PUBLIC_BASE_URL: z.string().optional(),
+  /**
+   * Khi không có PUBLIC_BASE_URL: upload QR lên host tạm (litterbox/0x0) để sendPhoto.
+   * Tắt bằng QR_TEMP_UPLOAD=false nếu không muốn QR ra internet.
+   */
+  QR_TEMP_UPLOAD: z
+    .string()
+    .optional()
+    .default('true')
+    .transform((v) => !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase())),
   NODE_ENV: z.string().optional(),
 });
 

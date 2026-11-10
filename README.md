@@ -37,7 +37,7 @@ Xem [`.env.example`](./.env.example). Bắt buộc:
 
 Tuỳ chọn: `ADMIN_ZALO_USER_IDS` nếu đã biết sẵn id.
 
-QR login: bot gọi `sendPhoto` (upload media Zalo hoặc URL công khai). Nếu máy local không public được, set `PUBLIC_BASE_URL` (HTTPS/ngrok) trỏ về server.
+QR login: Zalo Bot `sendPhoto` chỉ nhận **HTTPS URL**. Mặc định `QR_TEMP_UPLOAD=true` — bot upload QR lên host tạm rồi gửi ảnh (không cần tự dựng web). Có thể tắt và dùng `PUBLIC_BASE_URL`/mở file PNG local.
 
 ## Scripts
 
