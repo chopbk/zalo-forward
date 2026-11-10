@@ -4,6 +4,7 @@ import { resolve as resolvePath, basename } from 'node:path';
 import { getEnv } from '../config/env.js';
 import logger from '../config/logger.js';
 import { SendQueue } from '../relay/queue.js';
+import { openLocalFile } from './open-local.js';
 import { uploadTempImageUrl } from './temp-image.js';
 
 export type BotInbound = {
@@ -184,49 +185,52 @@ export class ZaloBotControl {
   }
 
   /**
-   * Gửi ảnh QR qua Zalo Bot.
-   * sendPhoto chỉ nhận HTTPS URL (docs Zalo) — thử:
-   * 1) PUBLIC_BASE_URL
-   * 2) host tạm (litterbox/0x0) nếu QR_TEMP_UPLOAD=true
-   * 3) fallback: đường dẫn file local
+   * Gửi / hiện QR đăng nhập.
+   * Zalo Bot sendPhoto chỉ nhận HTTPS URL — mặc định mở PNG trên máy chạy bot (nhanh, ổn định).
+   * Tuỳ chọn: PUBLIC_BASE_URL hoặc QR_TEMP_UPLOAD=true.
    */
   async sendPhoto(userId: string, filePath: string, caption?: string): Promise<void> {
-    const errors: string[] = [];
     const absPath = resolvePath(filePath);
+    openLocalFile(absPath);
 
     const publicUrl = publicQrUrl(filePath);
     if (publicUrl) {
       try {
         await this.sendPhotoByUrl(userId, publicUrl, caption);
+        await this.sendText(
+          userId,
+          'Đã gửi ảnh QR vào chat. Nếu không thấy, xem cửa sổ vừa mở trên máy chạy bot.',
+        );
         return;
       } catch (err) {
-        errors.push(`public_url: ${errMsg(err)}`);
         logger.warn({ err, publicUrl }, 'sendPhoto via PUBLIC_BASE_URL failed');
       }
     }
 
     if (getEnv().QR_TEMP_UPLOAD) {
       try {
-        const tempUrl = await uploadTempImageUrl(filePath);
-        const note =
-          (caption ? caption + '\n' : '') +
-          'Quét ngay (QR tạm trên host công khai, hết hạn ~1h).';
-        await this.sendPhotoByUrl(userId, tempUrl, note);
-        logger.info({ tempUrl }, 'QR sent via temp host');
+        const tempUrl = await Promise.race([
+          uploadTempImageUrl(filePath),
+          new Promise<string>((_, reject) =>
+            setTimeout(() => reject(new Error('temp host timeout 8s')), 8000),
+          ),
+        ]);
+        await this.sendPhotoByUrl(
+          userId,
+          tempUrl,
+          (caption ? caption + '\n' : '') + 'Quét ngay.',
+        );
         return;
       } catch (err) {
-        errors.push(`temp_host: ${errMsg(err)}`);
-        logger.warn({ err }, 'temp host QR upload failed');
+        logger.warn({ err }, 'temp host QR skipped');
       }
     }
 
     await this.sendText(
       userId,
       `${caption ? caption + '\n' : ''}` +
-        `Bot không gửi được ảnh (Zalo chỉ nhận URL HTTPS).\n` +
-        `Mở file này trên máy chạy bot rồi quét:\n${absPath}\n` +
-        `Hoặc set PUBLIC_BASE_URL (ngrok) rồi /login lại.\n` +
-        `(chi tiết: ${errors.join(' | ') || 'no attempt'})`,
+        `QR đã mở trên máy chạy bot — đưa điện thoại quét cửa sổ/ảnh đó.\n` +
+        `File: ${absPath}`,
     );
   }
 
@@ -274,10 +278,6 @@ export class ZaloBotControl {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /** Build public HTTPS URL for a QR file under /qr/:file when PUBLIC_BASE_URL is set. */

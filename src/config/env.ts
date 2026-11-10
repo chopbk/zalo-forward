@@ -25,13 +25,13 @@ const baseSchema = z.object({
   LOG_LEVEL: z.string().default('info'),
   PUBLIC_BASE_URL: z.string().optional(),
   /**
-   * Khi không có PUBLIC_BASE_URL: upload QR lên host tạm (litterbox/0x0) để sendPhoto.
-   * Tắt bằng QR_TEMP_UPLOAD=false nếu không muốn QR ra internet.
+   * Upload QR lên host tạm để gửi ảnh qua bot. Mặc định tắt (host ngoài thường chậm).
+   * Cách mặc định: mở PNG trên máy chạy bot.
    */
   QR_TEMP_UPLOAD: z
     .string()
     .optional()
-    .default('true')
+    .default('false')
     .transform((v) => !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase())),
   NODE_ENV: z.string().optional(),
 });

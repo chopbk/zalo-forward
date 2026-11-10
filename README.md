@@ -37,7 +37,7 @@ Xem [`.env.example`](./.env.example). Bắt buộc:
 
 Tuỳ chọn: `ADMIN_ZALO_USER_IDS` nếu đã biết sẵn id.
 
-QR login: Zalo Bot `sendPhoto` chỉ nhận **HTTPS URL**. Mặc định `QR_TEMP_UPLOAD=true` — bot upload QR lên host tạm rồi gửi ảnh (không cần tự dựng web). Có thể tắt và dùng `PUBLIC_BASE_URL`/mở file PNG local.
+QR login: mặc định **mở file PNG trên máy chạy bot** (nhanh, không cần web). Zalo Bot chỉ gửi ảnh nếu có `PUBLIC_BASE_URL` hoặc bật `QR_TEMP_UPLOAD=true` (host tạm, thường chậm).
 
 ## Scripts
 
