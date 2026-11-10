@@ -5,7 +5,7 @@ import logger from '../config/logger.js';
 
 /**
  * Upload anh len host tam (HTTPS) — race nhieu host.
- * VPS thuong bi chan catbox/0x0 → uu tien telegra.ph + imgbb (neu co key).
+ * VPS thuong bi chan catbox/0x0/telegra → uu tien freeimage + imgbb (neu co key).
  */
 export async function uploadTempImageUrl(filePath: string): Promise<string> {
   const buf = await readFile(filePath);
@@ -13,6 +13,7 @@ export async function uploadTempImageUrl(filePath: string): Promise<string> {
   const filename = basename(filePath) || 'qr.png';
 
   const attempts: Array<Promise<string>> = [
+    withTimeout(uploadFreeImage(buf), 15_000, 'freeimage'),
     withTimeout(uploadTelegraPh(buf, filename), 15_000, 'telegra'),
     withTimeout(uploadCatbox(buf, filename), 15_000, 'catbox'),
     withTimeout(uploadLitterbox(buf, filename), 15_000, 'litterbox'),
@@ -56,6 +57,34 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
       },
     );
   });
+}
+
+/** Public demo key tu freeimage.host docs — du cho QR tam. */
+const FREEIMAGE_DEMO_KEY = '6d207e02198a847aa98d0a2a901485a5';
+
+async function uploadFreeImage(buf: Buffer): Promise<string> {
+  const form = new FormData();
+  form.append('source', buf.toString('base64'));
+  form.append('type', 'base64');
+  form.append('action', 'upload');
+  const key = FREEIMAGE_DEMO_KEY;
+  const res = await fetch(`https://freeimage.host/api/1/upload?key=${encodeURIComponent(key)}`, {
+    method: 'POST',
+    body: form,
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; zmf/0.1)' },
+  });
+  const json = (await res.json()) as {
+    status_code?: number;
+    image?: { url?: string; display_url?: string };
+    error?: { message?: string };
+    status_txt?: string;
+  };
+  const url = json.image?.url ?? json.image?.display_url;
+  if (!res.ok || !url || !/^https?:\/\//i.test(url)) {
+    throw new Error(`freeimage: ${json.error?.message ?? json.status_txt ?? res.status}`);
+  }
+  logger.info({ host: 'freeimage' }, 'QR temp upload ok');
+  return url;
 }
 
 async function uploadTelegraPh(buf: Buffer, filename: string): Promise<string> {
