@@ -308,22 +308,26 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
       return;
     }
     try {
-      let groups = listGroupCache(tenant.id);
-      if (groups.length === 0 || sessionManager.isRunning(tenant.id)) {
+      let groups: Array<{ groupId: string; name: string | null }> = [];
+      if (sessionManager.isRunning(tenant.id)) {
         try {
+          // listGroups đã sort: ghim trước, rồi gần đây nhất
           const live = await sessionManager.refreshGroups(tenant.id);
           groups = live.map((g) => ({ groupId: g.groupId, name: g.name }));
         } catch {
-          // use cache
+          groups = listGroupCache(tenant.id);
         }
+      } else {
+        groups = listGroupCache(tenant.id);
       }
       if (groups.length === 0) {
         await bot.sendText(zaloUserId, 'Không thấy group nào. Nick có trong group chưa?');
         return;
       }
-      const lines = groups.map(
-        (g, i) => `${i + 1}. ${g.name ?? '?'} — id=${g.groupId}`,
-      );
+      const lines = [
+        'Group (ghim → gần đây nhất):',
+        ...groups.map((g, i) => `${i + 1}. ${g.name ?? '?'} — id=${g.groupId}`),
+      ];
       // chunk if long
       const chunkSize = 30;
       for (let i = 0; i < lines.length; i += chunkSize) {

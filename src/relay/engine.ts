@@ -1,5 +1,5 @@
 import logger from '../config/logger.js';
-import { listEnabledRulesForSource } from '../db/rules.js';
+import { listEnabledRulesForSource, touchGroupActivity } from '../db/rules.js';
 import { claimProcessedMessage } from '../db/processed.js';
 import {
   claimNextJob,
@@ -29,6 +29,8 @@ export async function handleGroupInbound(
   if (!claimProcessedMessage(tenant.id, msg.messageId)) {
     return;
   }
+
+  touchGroupActivity(tenant.id, msg.groupId, Date.now(), undefined);
 
   const rules = listEnabledRulesForSource(tenant.id, msg.groupId);
   if (rules.length === 0) return;

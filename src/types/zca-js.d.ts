@@ -72,6 +72,12 @@ declare module 'zca-js' {
         { name?: string; totalMember?: number; createdTime?: number }
       >;
     }>;
+    getUnreadMark?: () => Promise<{
+      data?: {
+        convsGroup?: Array<{ id?: number | string; ts?: number }>;
+      };
+    }>;
+    getPinConversations?: () => Promise<{ conversations?: string[] }>;
     getOwnId: () => string;
     listener: {
       on: (event: 'message', cb: (message: ZaloListenerMessage) => void) => void;

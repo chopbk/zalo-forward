@@ -175,29 +175,67 @@ export function ruleMatchesContent(rule: ForwardRule, text: string): boolean {
   return matchesKeywords(text, rule.keywords);
 }
 
+/**
+ * Đồng bộ tên group. Không đè last_seen_at trừ khi truyền lastSeenAt (ms).
+ */
 export function upsertGroupCache(
   tenantId: number,
   groupId: string,
   name: string | null,
+  lastSeenAt?: number,
 ): void {
+  if (lastSeenAt != null && lastSeenAt > 0) {
+    getDb()
+      .prepare(
+        `INSERT INTO groups_cache (tenant_id, group_id, name, last_seen_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(tenant_id, group_id) DO UPDATE SET
+           name = COALESCE(excluded.name, groups_cache.name),
+           last_seen_at = MAX(groups_cache.last_seen_at, excluded.last_seen_at)`,
+      )
+      .run(tenantId, groupId, name, lastSeenAt);
+    return;
+  }
+
   getDb()
     .prepare(
       `INSERT INTO groups_cache (tenant_id, group_id, name, last_seen_at)
-       VALUES (?, ?, ?, ?)
+       VALUES (?, ?, ?, 0)
        ON CONFLICT(tenant_id, group_id) DO UPDATE SET
-         name = COALESCE(excluded.name, groups_cache.name),
-         last_seen_at = excluded.last_seen_at`,
+         name = COALESCE(excluded.name, groups_cache.name)`,
     )
-    .run(tenantId, groupId, name, Date.now());
+    .run(tenantId, groupId, name);
 }
 
-export function listGroupCache(tenantId: number): Array<{ groupId: string; name: string | null }> {
+/** Cập nhật hoạt động gần đây (tin inbound / unread mark). */
+export function touchGroupActivity(
+  tenantId: number,
+  groupId: string,
+  atMs: number = Date.now(),
+  name?: string | null,
+): void {
+  upsertGroupCache(tenantId, groupId, name ?? null, atMs);
+}
+
+export function listGroupCache(
+  tenantId: number,
+): Array<{ groupId: string; name: string | null; lastSeenAt: number }> {
   const rows = getDb()
     .prepare(
-      `SELECT group_id, name FROM groups_cache WHERE tenant_id = ? ORDER BY name COLLATE NOCASE`,
+      `SELECT group_id, name, last_seen_at FROM groups_cache
+       WHERE tenant_id = ?
+       ORDER BY last_seen_at DESC, name COLLATE NOCASE ASC`,
     )
-    .all(tenantId) as Array<{ group_id: string; name: string | null }>;
-  return rows.map((r) => ({ groupId: r.group_id, name: r.name }));
+    .all(tenantId) as Array<{
+    group_id: string;
+    name: string | null;
+    last_seen_at: number;
+  }>;
+  return rows.map((r) => ({
+    groupId: r.group_id,
+    name: r.name,
+    lastSeenAt: r.last_seen_at ?? 0,
+  }));
 }
 
 export function getGroupName(tenantId: number, groupId: string): string | null {

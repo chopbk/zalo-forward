@@ -67,16 +67,58 @@ export class PersonalAccountAdapter {
     await this.handler(normalized);
   }
 
-  async listGroups(): Promise<Array<{ groupId: string; name: string }>> {
+  async listGroups(): Promise<
+    Array<{ groupId: string; name: string; lastActiveAt?: number; pinned?: boolean }>
+  > {
     const all = await this.api.getAllGroups();
     const ids = Object.keys(all.gridVerMap ?? {});
     if (ids.length === 0) return [];
     const info = await this.api.getGroupInfo(ids);
     const map = info.gridInfoMap ?? {};
-    return ids.map((id) => ({
+
+    const lastById = new Map<string, number>();
+    try {
+      if (typeof this.api.getUnreadMark === 'function') {
+        const unread = await this.api.getUnreadMark();
+        for (const c of unread.data?.convsGroup ?? []) {
+          if (c.id == null || c.ts == null) continue;
+          const id = String(c.id);
+          const ts = Number(c.ts);
+          if (!Number.isFinite(ts)) continue;
+          // Zalo đôi khi trả giây — chuẩn hoá về ms
+          const ms = ts < 1e12 ? ts * 1000 : ts;
+          lastById.set(id, Math.max(lastById.get(id) ?? 0, ms));
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    const pinned = new Set<string>();
+    try {
+      if (typeof this.api.getPinConversations === 'function') {
+        const pins = await this.api.getPinConversations();
+        for (const p of pins.conversations ?? []) pinned.add(String(p));
+      }
+    } catch {
+      // ignore
+    }
+
+    const groups = ids.map((id) => ({
       groupId: id,
       name: map[id]?.name ?? id,
+      lastActiveAt: lastById.get(id),
+      pinned: pinned.has(id),
     }));
+
+    groups.sort((a, b) => {
+      const ap = a.pinned ? 1 : 0;
+      const bp = b.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0);
+    });
+
+    return groups;
   }
 
   sendText(groupId: string, text: string): Promise<{ messageId: string }> {

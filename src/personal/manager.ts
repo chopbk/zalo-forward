@@ -116,13 +116,18 @@ export class SessionManager {
     clearSession(tenantId);
   }
 
-  async refreshGroups(tenantId: number): Promise<Array<{ groupId: string; name: string }>> {
+  async refreshGroups(
+    tenantId: number,
+  ): Promise<Array<{ groupId: string; name: string; lastActiveAt?: number }>> {
     const adapter = this.getAdapter(tenantId);
     if (!adapter) throw new Error('Session chưa chạy — /login rồi /resume');
     const groups = await adapter.listGroups();
-    for (const g of groups) {
-      upsertGroupCache(tenantId, g.groupId, g.name);
-    }
+    const now = Date.now();
+    groups.forEach((g, i) => {
+      // Giữ ts thật; group chưa có activity giữ thứ tự sort bằng ts giả giảm dần
+      const ts = g.lastActiveAt && g.lastActiveAt > 0 ? g.lastActiveAt : now - i;
+      upsertGroupCache(tenantId, g.groupId, g.name, ts);
+    });
     return groups;
   }
 }
