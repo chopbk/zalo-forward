@@ -194,7 +194,7 @@ declare module 'zca-js' {
           imei: string;
           userAgent: string;
         };
-        actions: { retry: () => void; abort: () => void };
+        actions: { retry: () => void; abort: () => void } | null;
       };
 
   export class Zalo {

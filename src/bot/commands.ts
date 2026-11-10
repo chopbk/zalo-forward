@@ -268,86 +268,80 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
       zaloUserId,
       'Đang tạo QR đăng nhập Zalo cá nhân...\nDùng nick phụ. Không mở Zalo Web song song.\nGõ /stop để tạm dừng.',
     );
-    try {
-      await startQrLogin(tenant.id, {
-        onQrReady: async (qrPath, attempt) => {
-          const caption =
-            attempt <= 1
-              ? 'Quét QR bằng Zalo trên điện thoại.\n(/stop để dừng)'
-              : `QR mới (${attempt}/${MAX_QR_SENDS}) — quét bằng Zalo trên điện thoại.\n(/stop để dừng)`;
-          await bot.sendPhoto(zaloUserId, qrPath, caption);
-        },
-        onScanned: async (name) => {
-          await bot.sendText(zaloUserId, `Đã quét (${name ?? 'ok'}) — đang xác nhận...`);
-        },
-        onExpired: async ({ willRetry, attempt, maxAttempts }) => {
-          if (willRetry) {
-            await bot.sendText(
-              zaloUserId,
-              `QR hết hạn — đang tạo mã mới (${attempt}/${maxAttempts})...\nGõ /stop để tạm dừng.`,
-            );
-            return;
-          }
-          upsertSession(tenant.id, {
-            status: 'error',
-            lastError: `QR expired after ${maxAttempts} sends`,
-          });
+    // Chạy nền — await loginQR sẽ chặn luôn poll loop → bot "chết", /stop không vào được.
+    startQrLogin(tenant.id, {
+      onQrReady: async (qrPath, attempt) => {
+        const caption =
+          attempt <= 1
+            ? 'Quét QR bằng Zalo trên điện thoại.\n(/stop để dừng)'
+            : `QR mới (${attempt}/${MAX_QR_SENDS}) — quét bằng Zalo trên điện thoại.\n(/stop để dừng)`;
+        await bot.sendPhoto(zaloUserId, qrPath, caption);
+      },
+      onScanned: async (name) => {
+        await bot.sendText(zaloUserId, `Đã quét (${name ?? 'ok'}) — đang xác nhận...`);
+      },
+      onExpired: async ({ willRetry, attempt, maxAttempts }) => {
+        if (willRetry) {
           await bot.sendText(
             zaloUserId,
-            `Đã gửi QR ${maxAttempts} lần mà chưa quét. Dừng lại — gõ /login khi sẵn sàng.`,
+            `QR hết hạn — đang tạo mã mới (${attempt}/${maxAttempts})...\nGõ /stop để tạm dừng.`,
           );
-        },
-        onDeclined: async () => {
-          upsertSession(tenant.id, { status: 'error', lastError: 'QR declined' });
-          await bot.sendText(zaloUserId, 'Bạn đã từ chối QR. Gõ /login để thử lại.');
-        },
-        onSuccess: async (_session, path, ownId) => {
-          upsertSession(tenant.id, {
-            sessionPath: path,
-            zaloOwnId: ownId,
-            status: 'active',
-            lastError: null,
-          });
+          return;
+        }
+        upsertSession(tenant.id, {
+          status: 'error',
+          lastError: `QR expired after ${maxAttempts} sends`,
+        });
+        await bot.sendText(
+          zaloUserId,
+          `Đã gửi QR ${maxAttempts} lần mà chưa quét. Dừng lại — gõ /login khi sẵn sàng.`,
+        );
+      },
+      onDeclined: async () => {
+        upsertSession(tenant.id, { status: 'error', lastError: 'QR declined' });
+        await bot.sendText(zaloUserId, 'Bạn đã từ chối QR. Gõ /login để thử lại.');
+      },
+      onSuccess: async (_session, path, ownId) => {
+        upsertSession(tenant.id, {
+          sessionPath: path,
+          zaloOwnId: ownId,
+          status: 'active',
+          lastError: null,
+        });
+        await bot.sendText(
+          zaloUserId,
+          `Đăng nhập OK (own_id=${ownId}). Đang bật listener...`,
+        );
+        try {
+          const fresh = findTenantByBotUserId(zaloUserId)!;
+          await sessionManager.startTenant(fresh, path);
+          const groups = await sessionManager.refreshGroups(fresh.id);
           await bot.sendText(
             zaloUserId,
-            `Đăng nhập OK (own_id=${ownId}). Đang bật listener...`,
+            `Sẵn sàng. Có ${groups.length} group.\nGõ /groups rồi /addrule.`,
           );
-          try {
-            const fresh = findTenantByBotUserId(zaloUserId)!;
-            await sessionManager.startTenant(fresh, path);
-            const groups = await sessionManager.refreshGroups(fresh.id);
-            await bot.sendText(
-              zaloUserId,
-              `Sẵn sàng. Có ${groups.length} group.\nGõ /groups rồi /addrule.`,
-            );
-          } catch (err) {
-            upsertSession(tenant.id, {
-              status: 'error',
-              lastError: err instanceof Error ? err.message : String(err),
-            });
-            await bot.sendText(
-              zaloUserId,
-              `Login OK nhưng start listener lỗi: ${err instanceof Error ? err.message : err}`,
-            );
-          }
-        },
-        onError: async (err) => {
+        } catch (err) {
           upsertSession(tenant.id, {
             status: 'error',
             lastError: err instanceof Error ? err.message : String(err),
           });
           await bot.sendText(
             zaloUserId,
-            `Login lỗi: ${err instanceof Error ? err.message : String(err)}`,
+            `Login OK nhưng start listener lỗi: ${err instanceof Error ? err.message : err}`,
           );
-        },
-      });
-    } catch (err) {
-      await bot.sendText(
-        zaloUserId,
-        `Không tạo được QR: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+        }
+      },
+      onError: async (err) => {
+        upsertSession(tenant.id, {
+          status: 'error',
+          lastError: err instanceof Error ? err.message : String(err),
+        });
+        await bot.sendText(
+          zaloUserId,
+          `Login lỗi: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      },
+    });
     return;
   }
 

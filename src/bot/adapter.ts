@@ -151,7 +151,12 @@ export class ZaloBotControl {
         for (const update of updates) {
           if (this.pollAbort) break;
           const msg = normalizeBotUpdate(update);
-          if (msg) await this.dispatch(msg);
+          // Không await — lệnh dài (/login QR) không được chặn getUpdates.
+          if (msg) {
+            void this.dispatch(msg).catch((err) =>
+              logger.error({ err }, 'Bot poll handler failed'),
+            );
+          }
         }
       } catch (err) {
         if (this.pollAbort) break;

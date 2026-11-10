@@ -56,136 +56,149 @@ export function stopQrLogin(tenantId: number): boolean {
   return true;
 }
 
-/**
- * Start QR login for a tenant. Resolves when GotLoginInfo saved, or rejects on hard fail.
- * QR hết hạn chỉ auto-retry tới MAX_QR_SENDS lần gửi ảnh — tránh spam khi user không quét.
- * Gõ /stop để abort sớm.
- */
-export async function startQrLogin(
-  tenantId: number,
-  cbs: QrLoginCallbacks,
-): Promise<void> {
-  const env = getEnv();
-  await mkdir(env.QR_DIR, { recursive: true });
-  const qrPath = join(env.QR_DIR, `tenant-${tenantId}.png`);
-  const sessionPath = sessionPathForTenant(tenantId);
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const name = 'name' in err ? String((err as { name?: unknown }).name) : '';
+  const message = err instanceof Error ? err.message : String(err);
+  return /LoginQRAborted/i.test(name) || /aborted|Operation aborted/i.test(message);
+}
 
-  // /login lại trong lúc đang chờ → dừng phiên cũ trước
+/**
+ * Start QR login in background — KHÔNG block bot poll loop.
+ * Gọi /stop để abort; hết hạn tối đa MAX_QR_SENDS lần gửi ảnh.
+ */
+export function startQrLogin(tenantId: number, cbs: QrLoginCallbacks): void {
   if (activeQrLogins.has(tenantId)) {
     stopQrLogin(tenantId);
   }
 
-  const zalo = new Zalo({ imageMetadataGetter });
-  let saved = false;
-  let qrSends = 0;
   let stopped = false;
+  let settled = false; // decline / max / success — abort chỉ để settle promise
+  let qrSends = 0;
+  let abortFn: (() => void) | null = null;
 
   const clearActive = (): void => {
-    const cur = activeQrLogins.get(tenantId);
-    if (cur) activeQrLogins.delete(tenantId);
+    activeQrLogins.delete(tenantId);
   };
 
-  const rememberAbort = (abortFn: () => void): void => {
-    activeQrLogins.set(tenantId, {
-      abort: () => {
-        stopped = true;
-        abortFn();
-      },
-    });
-  };
-
-  const api = await zalo.loginQR({}, (event) => {
-    if (stopped) {
-      clearActive();
+  activeQrLogins.set(tenantId, {
+    abort: () => {
+      stopped = true;
       try {
-        event.actions.abort();
+        abortFn?.();
       } catch {
         // ignore
       }
-      return;
-    }
-    if ('actions' in event && typeof event.actions.abort === 'function') {
-      rememberAbort(event.actions.abort);
-    }
+    },
+  });
 
-    switch (event.type) {
-      case LoginQRCallbackEventType.QRCodeGenerated:
-        qrSends += 1;
-        void event.actions.saveToFile(qrPath).then(() => {
-          if (stopped) return;
-          return cbs.onQrReady(qrPath, qrSends);
-        });
-        break;
-      case LoginQRCallbackEventType.QRCodeScanned:
-        void cbs.onScanned?.(event.data.display_name);
-        break;
-      case LoginQRCallbackEventType.QRCodeExpired: {
-        const willRetry = qrSends < MAX_QR_SENDS;
-        void cbs.onExpired?.({
-          attempt: qrSends,
-          maxAttempts: MAX_QR_SENDS,
-          willRetry,
-        });
-        if (willRetry) {
-          event.actions.retry();
-        } else {
-          logger.info({ tenantId, qrSends }, 'QR login stopped after max sends');
+  void (async () => {
+    const env = getEnv();
+    try {
+      await mkdir(env.QR_DIR, { recursive: true });
+      const qrPath = join(env.QR_DIR, `tenant-${tenantId}.png`);
+      const sessionPath = sessionPathForTenant(tenantId);
+      const zalo = new Zalo({ imageMetadataGetter });
+
+      const api = await zalo.loginQR({}, (event) => {
+        if (stopped) {
           clearActive();
-          event.actions.abort();
-        }
-        break;
-      }
-      case LoginQRCallbackEventType.QRCodeDeclined:
-        clearActive();
-        void cbs.onDeclined?.();
-        break;
-      case LoginQRCallbackEventType.GotLoginInfo:
-        clearActive();
-        void (async () => {
           try {
-            const session: ZaloSessionFile = {
-              cookie: event.data.cookie,
-              imei: event.data.imei,
-              userAgent: event.data.userAgent,
-            };
-            await saveSessionAtomic(session, sessionPath);
-            saved = true;
-            // Login again to get ownId cleanly
-            const logged = await new Zalo({ imageMetadataGetter }).login(session);
-            const ownId = logged.getOwnId();
+            event.actions?.abort?.();
+          } catch {
+            // ignore
+          }
+          return;
+        }
+
+        if (event.actions && typeof event.actions.abort === 'function') {
+          abortFn = event.actions.abort;
+        }
+
+        switch (event.type) {
+          case LoginQRCallbackEventType.QRCodeGenerated:
+            qrSends += 1;
+            void event.actions.saveToFile(qrPath).then(() => {
+              if (stopped || settled) return;
+              return cbs.onQrReady(qrPath, qrSends);
+            });
+            break;
+          case LoginQRCallbackEventType.QRCodeScanned:
+            void cbs.onScanned?.(event.data.display_name);
+            break;
+          case LoginQRCallbackEventType.QRCodeExpired: {
+            const willRetry = qrSends < MAX_QR_SENDS;
+            void cbs.onExpired?.({
+              attempt: qrSends,
+              maxAttempts: MAX_QR_SENDS,
+              willRetry,
+            });
+            if (willRetry) {
+              event.actions.retry();
+            } else {
+              settled = true;
+              clearActive();
+              logger.info({ tenantId, qrSends }, 'QR login stopped after max sends');
+              event.actions.abort();
+            }
+            break;
+          }
+          case LoginQRCallbackEventType.QRCodeDeclined:
+            settled = true;
+            clearActive();
+            void cbs.onDeclined?.();
+            // loginQR không resolve khi decline + callback → abort để kết thúc promise
             try {
-              logged.listener.stop();
+              event.actions.abort();
             } catch {
               // ignore
             }
-            await cbs.onSuccess(session, sessionPath, ownId);
-          } catch (err) {
-            logger.error({ err, tenantId }, 'QR login save failed');
-            await cbs.onError?.(err);
-          }
-        })();
-        break;
-      default:
-        break;
+            break;
+          case LoginQRCallbackEventType.GotLoginInfo:
+            settled = true;
+            clearActive();
+            void (async () => {
+              try {
+                const session: ZaloSessionFile = {
+                  cookie: event.data.cookie,
+                  imei: event.data.imei,
+                  userAgent: event.data.userAgent,
+                };
+                await saveSessionAtomic(session, sessionPath);
+                const logged = await new Zalo({ imageMetadataGetter }).login(session);
+                const ownId = logged.getOwnId();
+                try {
+                  logged.listener.stop();
+                } catch {
+                  // ignore
+                }
+                await cbs.onSuccess(session, sessionPath, ownId);
+              } catch (err) {
+                logger.error({ err, tenantId }, 'QR login save failed');
+                await cbs.onError?.(err);
+              }
+            })();
+            break;
+          default:
+            break;
+        }
+      });
+
+      try {
+        api.listener.stop();
+      } catch {
+        // ignore
+      }
+    } catch (err) {
+      clearActive();
+      if (stopped || settled || isAbortError(err)) {
+        logger.info({ tenantId, stopped, settled }, 'QR login ended');
+        return;
+      }
+      logger.error({ err, tenantId }, 'QR login failed');
+      await cbs.onError?.(err);
     }
-  });
+  })();
 
-  if (!api) {
-    clearActive();
-    throw new Error('Login QR failed');
-  }
-
-  // Wait briefly for GotLoginInfo; caller may keep process alive via callbacks
-  await new Promise((r) => setTimeout(r, 500));
-  try {
-    api.listener.stop();
-  } catch {
-    // ignore
-  }
-
-  if (!saved) {
-    // QR flow continues asynchronously via callbacks until success/decline/stop;
-    // do not throw — user still scanning.
-    logger.info({ tenantId }, 'QR login waiting for scan');
-  }
+  logger.info({ tenantId }, 'QR login started (background)');
 }
