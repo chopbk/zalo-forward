@@ -35,7 +35,9 @@ Xem [`.env.example`](./.env.example). Bắt buộc:
 - `ZALO_BOT_TOKEN` — token Bot Platform  
 - `ADMIN_SETUP_PASSWORD` — mật khẩu claim admin qua `/iamadmin` (khuyên dùng)
 
-Tuỳ chọn: `ADMIN_ZALO_USER_IDS` nếu đã biết sẵn id. Gợi ý set `PUBLIC_BASE_URL` (HTTPS) cho link QR.
+Tuỳ chọn: `ADMIN_ZALO_USER_IDS` nếu đã biết sẵn id.
+
+QR login: bot gọi `sendPhoto` (upload media Zalo hoặc URL công khai). Nếu máy local không public được, set `PUBLIC_BASE_URL` (HTTPS/ngrok) trỏ về server.
 
 ## Scripts
 

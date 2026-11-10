@@ -49,7 +49,7 @@ Khi user gõ `/start`, admin nhận thông báo.
 
 | Hiện tượng | Cách xử lý |
 |------------|------------|
-| QR không hiện ảnh | Set `PUBLIC_BASE_URL` hoặc mở file PNG trong `QR_DIR` |
+| QR không hiện ảnh | Bot đã tự upload/gửi `sendPhoto`. Nếu vẫn fail: set `PUBLIC_BASE_URL=https://...` (ngrok/tunnel) trỏ về server, hoặc mở PNG trong `QR_DIR` |
 | Listener dừng | Không mở Zalo Web cùng nick; `/logout` rồi `/login` |
 | Không forward | `/status` — approved? session active? relay on? có rule đúng nguồn? |
 | Gần bị limit | Tăng `ZALO_MIN_SEND_INTERVAL_MS`, giảm `ZALO_SEND_MAX_PER_MINUTE` |

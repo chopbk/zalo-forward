@@ -1,5 +1,7 @@
 import type { Express, Request, Response } from 'express';
 import { createReadStream, existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
 import { getEnv } from '../config/env.js';
 import logger from '../config/logger.js';
 import { SendQueue } from '../relay/queue.js';
@@ -182,27 +184,165 @@ export class ZaloBotControl {
   }
 
   /**
-   * Gửi ảnh: thử sendPhoto nếu API hỗ trợ; fallback gửi URL/text.
+   * Gửi ảnh QR qua Zalo Bot.
+   * API sendPhoto chỉ nhận HTTPS URL — thử lần lượt:
+   * 1) PUBLIC_BASE_URL + /sendPhoto
+   * 2) upload multipart → me/media/images → lấy URL → /sendPhoto
+   * 3) multipart /sendPhoto trực tiếp với file
+   * 4) fallback text
    */
   async sendPhoto(userId: string, filePath: string, caption?: string): Promise<void> {
-    const env = getEnv();
-    if (env.PUBLIC_BASE_URL) {
-      const file = filePath.split(/[/\\]/).pop() ?? '';
-      const url = `${env.PUBLIC_BASE_URL.replace(/\/$/, '')}/qr/${file}`;
-      await this.sendText(
-        userId,
-        `${caption ? caption + '\n' : ''}Quét QR: ${url}`,
-      );
-      return;
+    const errors: string[] = [];
+
+    const publicUrl = publicQrUrl(filePath);
+    if (publicUrl) {
+      try {
+        await this.sendPhotoByUrl(userId, publicUrl, caption);
+        return;
+      } catch (err) {
+        errors.push(`public_url: ${errMsg(err)}`);
+        logger.warn({ err, publicUrl }, 'sendPhoto via PUBLIC_BASE_URL failed');
+      }
     }
 
-    // Fallback: bảo user mở file local / gửi đường dẫn
+    try {
+      const uploadedUrl = await this.uploadImageAndGetUrl(filePath);
+      if (uploadedUrl) {
+        await this.sendPhotoByUrl(userId, uploadedUrl, caption);
+        return;
+      }
+      errors.push('upload: no url returned');
+    } catch (err) {
+      errors.push(`upload: ${errMsg(err)}`);
+      logger.warn({ err }, 'upload image for sendPhoto failed');
+    }
+
+    try {
+      await this.sendPhotoMultipart(userId, filePath, caption);
+      return;
+    } catch (err) {
+      errors.push(`multipart: ${errMsg(err)}`);
+      logger.warn({ err }, 'multipart sendPhoto failed');
+    }
+
     await this.sendText(
       userId,
-      `${caption ? caption + '\n' : ''}QR đã tạo tại server: ${filePath}\n` +
-        `Đặt PUBLIC_BASE_URL để bot gửi link ảnh QR.\n` +
-        `Hoặc mở file PNG trên máy chạy bot để quét.`,
+      `${caption ? caption + '\n' : ''}` +
+        `Không gửi được ảnh QR qua bot.\n` +
+        `File: ${filePath}\n` +
+        `Cách nhanh: đặt PUBLIC_BASE_URL=https://... (tunnel/ngrok) rồi /login lại.\n` +
+        `Hoặc mở file PNG trên máy chạy bot để quét.\n` +
+        `(chi tiết: ${errors.join(' | ')})`,
     );
+  }
+
+  private sendPhotoByUrl(
+    userId: string,
+    photoUrl: string,
+    caption?: string,
+  ): Promise<void> {
+    return this.queue.enqueue(async () => {
+      const body: Record<string, string> = {
+        chat_id: userId,
+        photo: photoUrl,
+      };
+      if (caption?.trim()) body.caption = caption.trim().slice(0, 2000);
+
+      const res = await fetch(`${this.apiBase}/sendPhoto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        description?: string;
+        error_code?: number;
+      };
+      if (!res.ok || json.ok === false) {
+        throw new Error(
+          `sendPhoto failed: ${json.description ?? res.statusText} (${json.error_code ?? res.status})`,
+        );
+      }
+    });
+  }
+
+  /** Upload local file → Zalo media → public URL */
+  private async uploadImageAndGetUrl(filePath: string): Promise<string | null> {
+    const buf = await readFile(filePath);
+    const filename = basename(filePath) || 'qr.png';
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(buf)], { type: 'image/png' }), filename);
+
+    const res = await fetch(`${this.apiBase}/me/media/images`, {
+      method: 'POST',
+      body: form,
+    });
+    const json = (await res.json()) as {
+      ok?: boolean;
+      result?: {
+        attachment_id?: string;
+        url?: string;
+        data?: { attachment_id?: string; url?: string };
+      };
+      description?: string;
+    };
+    if (!res.ok || json.ok === false) {
+      throw new Error(json.description ?? `upload HTTP ${res.status}`);
+    }
+
+    const direct =
+      json.result?.url ??
+      json.result?.data?.url ??
+      null;
+    if (direct && /^https?:\/\//i.test(direct)) return direct;
+
+    const attachmentId =
+      json.result?.attachment_id ?? json.result?.data?.attachment_id;
+    if (!attachmentId) return null;
+
+    const metaRes = await fetch(
+      `${this.apiBase}/me/media/${encodeURIComponent(attachmentId)}?redirect=true`,
+    );
+    const meta = (await metaRes.json()) as {
+      ok?: boolean;
+      result?: { url?: string };
+      url?: string;
+      description?: string;
+    };
+    const url = meta.result?.url ?? meta.url ?? null;
+    if (url && /^https?:\/\//i.test(url)) return url;
+    return null;
+  }
+
+  /** Thử gửi file trực tiếp multipart (một số gateway hỗ trợ như Telegram). */
+  private sendPhotoMultipart(
+    userId: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
+    return this.queue.enqueue(async () => {
+      const buf = await readFile(filePath);
+      const filename = basename(filePath) || 'qr.png';
+      const form = new FormData();
+      form.append('chat_id', userId);
+      if (caption?.trim()) form.append('caption', caption.trim().slice(0, 2000));
+      form.append('photo', new Blob([new Uint8Array(buf)], { type: 'image/png' }), filename);
+
+      const res = await fetch(`${this.apiBase}/sendPhoto`, {
+        method: 'POST',
+        body: form,
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        description?: string;
+        error_code?: number;
+      };
+      if (!res.ok || json.ok === false) {
+        throw new Error(
+          `multipart sendPhoto: ${json.description ?? res.statusText} (${json.error_code ?? res.status})`,
+        );
+      }
+    });
   }
 
   async notifyAdmins(text: string): Promise<void> {
@@ -219,6 +359,19 @@ export class ZaloBotControl {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Build public HTTPS URL for a QR file under /qr/:file when PUBLIC_BASE_URL is set. */
+export function publicQrUrl(filePath: string): string | null {
+  const base = getEnv().PUBLIC_BASE_URL?.trim();
+  if (!base) return null;
+  const file = basename(filePath).replace(/[^a-zA-Z0-9._-]/g, '');
+  if (!file) return null;
+  return `${base.replace(/\/$/, '')}/qr/${file}`;
 }
 
 export function normalizeBotUpdate(body: unknown): BotInbound | null {
