@@ -199,12 +199,22 @@ export function clearSession(tenantId: number): void {
     .run(tenantId);
 }
 
+/**
+ * Tenant có file session để boot listener.
+ * Gồm cả status error/expired — WS đóng từng để lại error, nếu chỉ nhận active
+ * thì sau pm2 restart sẽ không bao giờ login lại.
+ */
 export function listRelayReadyTenants(): Array<{ tenant: Tenant; session: SessionInfo }> {
   const tenants = listTenants('approved').filter((t) => t.relayEnabled);
   const out: Array<{ tenant: Tenant; session: SessionInfo }> = [];
   for (const tenant of tenants) {
     const session = getSession(tenant.id);
-    if (session?.status === 'active' && session.sessionPath) {
+    if (!session?.sessionPath) continue;
+    if (
+      session.status === 'active' ||
+      session.status === 'error' ||
+      session.status === 'expired'
+    ) {
       out.push({ tenant, session });
     }
   }

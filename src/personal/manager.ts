@@ -77,11 +77,14 @@ export class SessionManager {
         'Personal listener closed — scheduling restart',
       );
       this.slots.delete(tenant.id);
+      // Giữ session_path; status error vẫn được startAllReady boot lại sau pm2 restart
       upsertSession(tenant.id, {
         status: 'error',
         lastError: `WS closed ${code}: ${reason}`,
       });
+      const delayMs = code === 1000 ? 5_000 : 3_000;
       setTimeout(() => {
+        if (this.slots.has(tenant.id)) return; // đã được start lại (vd. process boot)
         void this.startTenant(tenant, sessionPath).catch((err) => {
           logger.error({ err, tenantId: tenant.id }, 'Auto-restart after WS close failed');
           upsertSession(tenant.id, {
@@ -89,7 +92,7 @@ export class SessionManager {
             lastError: err instanceof Error ? err.message : String(err),
           });
         });
-      }, 3_000);
+      }, delayMs);
     });
     adapter.start();
 

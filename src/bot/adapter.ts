@@ -139,6 +139,11 @@ export class ZaloBotControl {
           description?: string;
         };
         if (!res.ok || json.ok === false) {
+          const desc = String(json.description ?? '');
+          // Long-poll hết hạn là bình thường — không spam WARN
+          if (/timeout/i.test(desc) && (res.ok || res.status === 200)) {
+            continue;
+          }
           logger.warn(
             { status: res.status, description: json.description },
             'Zalo getUpdates non-OK',
