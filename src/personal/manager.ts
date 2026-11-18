@@ -95,6 +95,9 @@ export class SessionManager {
       }, delayMs);
     });
     adapter.start();
+    // Đăng ký slot ngay sau start — nếu WS chết trong lúc listGroups,
+    // onClosed vẫn xóa slot và schedule restart (tránh race bỏ qua restart).
+    this.slots.set(tenant.id, { tenant, adapter });
 
     try {
       const groups = await adapter.listGroups();
@@ -105,6 +108,15 @@ export class SessionManager {
       logger.warn({ err, tenantId: tenant.id }, 'Sync groups failed');
     }
 
+    // WS có thể đã đóng trong lúc sync groups → không ghi đè status error
+    if (!this.slots.has(tenant.id)) {
+      logger.warn(
+        { tenantId: tenant.id },
+        'Tenant slot gone after sync — chờ auto-restart',
+      );
+      return;
+    }
+
     upsertSession(tenant.id, {
       sessionPath,
       zaloOwnId: adapter.getOwnId(),
@@ -112,7 +124,6 @@ export class SessionManager {
       lastError: null,
     });
 
-    this.slots.set(tenant.id, { tenant, adapter });
     logger.info({ tenantId: tenant.id, ownId: adapter.getOwnId() }, 'Tenant session running');
   }
 
