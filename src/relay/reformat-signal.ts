@@ -93,30 +93,33 @@ function tryPendingNew(t: string): string | null {
   ].join('\n');
 }
 
-/** 🔸 [Chờ] Cập nhật lệnh chờ bán ... */
+/** 🔸 [Chờ] Cập nhật lệnh chờ bán ... — (cũ …) tùy chọn trên mọi dòng giá */
 function tryPendingUpdate(t: string): string | null {
   const m = t.match(
-    /^🔸\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\.?\s*\n+Giá chờ:\s*([\d.,]+)\s*\(cũ\s*([\d.,]+)\)\s*\n+Dừng lỗ:\s*([\d.,]+)\s*\n+Chốt lời:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+([\s\S]+)$/i,
+    /^🔸\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\.?\s*\n+Giá chờ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Dừng lỗ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Chốt lời:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+([\s\S]+)$/i,
   );
   if (!m) return null;
   const side = sideLabel(m[1]!);
   const product = formatProductName(m[2]!, 'short');
   const code = m[3]!;
   const price = formatPrice(m[4]!);
-  const priceOld = formatPrice(m[5]!);
+  const priceOld = m[5] ? formatPrice(m[5]) : null;
   const sl = formatPrice(m[6]!);
-  const tp = formatPrice(m[7]!);
-  const tpOld = m[8] ? formatPrice(m[8]) : null;
+  const slOld = m[7] ? formatPrice(m[7]) : null;
+  const tp = formatPrice(m[8]!);
+  const tpOld = m[9] ? formatPrice(m[9]) : null;
 
-  const tpLine = tpOld
-    ? `🎯 Chốt lời: ${tp} (Cũ: ${tpOld})`
-    : `🎯 Chốt lời: ${tp}`;
+  const priceLine = priceOld
+    ? `🔸 Giá ${side.limit}: ${price} (Cũ: ${priceOld})`
+    : `🔸 Giá ${side.limit}: ${price}`;
+  const slLine = slOld ? `🛑 Dừng lỗ: ${sl} (Cũ: ${slOld})` : `🛑 Dừng lỗ: ${sl}`;
+  const tpLine = tpOld ? `🎯 Chốt lời: ${tp} (Cũ: ${tpOld})` : `🎯 Chốt lời: ${tp}`;
 
   return [
     `🔄 [CẬP NHẬT LỆNH CHỜ ${side.muaBan}] ${product} (${code})`,
     '',
-    `🔸 Giá ${side.limit}: ${price} (Cũ: ${priceOld})`,
-    `🛑 Dừng lỗ: ${sl}`,
+    priceLine,
+    slLine,
     tpLine,
     '',
     `📌 A/C vui lòng điều chỉnh lệnh ${side.limit}, Dừng lỗ và Chốt lời theo các mức giá mới bên trên nhé ạ`,

@@ -61,6 +61,23 @@ A/C sửa lệnh Sell Limit, Dừng lỗ và Chốt lời theo các mức mới 
     );
   });
 
+  it('pending update with old prices on all lines', () => {
+    const old = `🔸 [Chờ] Cập nhật lệnh chờ bán Bạc micro tháng 3 (SILH27).
+Giá chờ: 47.088 (cũ 47.083)
+Dừng lỗ: 47.991 (cũ 48.118)
+Chốt lời: 44.560 (cũ 44.185)
+A/C sửa lệnh Sell Limit, Dừng lỗ và Chốt lời theo các mức mới nhé ạ!`;
+    expect(reformatSignalMessage(old)).toBe(
+      `🔄 [CẬP NHẬT LỆNH CHỜ BÁN] BẠC MICRO T3 (SILH27)
+
+🔸 Giá Sell Limit: 47.088 (Cũ: 47.083)
+🛑 Dừng lỗ: 47.991 (Cũ: 48.118)
+🎯 Chốt lời: 44.560 (Cũ: 44.185)
+
+📌 A/C vui lòng điều chỉnh lệnh Sell Limit, Dừng lỗ và Chốt lời theo các mức giá mới bên trên nhé ạ`,
+    );
+  });
+
   it('filled buy', () => {
     const old = `🔵 Mua Đậu tương tháng 1 (ZSEF27) [1] tại giá 1229.50
 ❌ Dừng lỗ: 1223.26 (-312.00 USD/Lot)

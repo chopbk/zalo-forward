@@ -71,6 +71,26 @@ export class SessionManager {
       if (!this.inboundHandler) return;
       await this.inboundHandler(tenant, msg);
     });
+    adapter.onClosed((code, reason) => {
+      logger.error(
+        { tenantId: tenant.id, code, reason },
+        'Personal listener closed — scheduling restart',
+      );
+      this.slots.delete(tenant.id);
+      upsertSession(tenant.id, {
+        status: 'error',
+        lastError: `WS closed ${code}: ${reason}`,
+      });
+      setTimeout(() => {
+        void this.startTenant(tenant, sessionPath).catch((err) => {
+          logger.error({ err, tenantId: tenant.id }, 'Auto-restart after WS close failed');
+          upsertSession(tenant.id, {
+            status: 'error',
+            lastError: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }, 3_000);
+    });
     adapter.start();
 
     try {

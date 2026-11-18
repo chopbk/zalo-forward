@@ -195,6 +195,10 @@ async function processOneJob(): Promise<boolean> {
           styles: payload.styles,
           mentions: payload.mentions,
         });
+        logger.info(
+          { jobId: job.id, dest: payload.destGroupId },
+          'Forwarded via sendMessage',
+        );
       }
     }
     markJobDone(job.id);

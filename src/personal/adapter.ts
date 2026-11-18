@@ -135,6 +135,13 @@ export class PersonalAccountAdapter {
     this.handler = handler;
   }
 
+  /** Gọi khi WS đóng hẳn (hết retry) — SessionManager restart tenant. */
+  private onClosedHandler: ((code: number, reason: string) => void) | null = null;
+
+  onClosed(handler: (code: number, reason: string) => void): void {
+    this.onClosedHandler = handler;
+  }
+
   start(): void {
     if (this.started) return;
     this.api.listener.on('message', (message) => {
@@ -142,7 +149,25 @@ export class PersonalAccountAdapter {
         logger.error({ err, tenantId: this.tenantId }, 'Personal inbound failed');
       });
     });
-    this.api.listener.start();
+    this.api.listener.on('disconnected', (code, reason) => {
+      logger.warn(
+        { tenantId: this.tenantId, code, reason: String(reason) },
+        'Personal WS disconnected — zca-js will retry if allowed',
+      );
+    });
+    this.api.listener.on('closed', (code, reason) => {
+      logger.error(
+        { tenantId: this.tenantId, code, reason: String(reason) },
+        'Personal WS closed — listener dead',
+      );
+      this.started = false;
+      this.onClosedHandler?.(Number(code), String(reason));
+    });
+    this.api.listener.on('error', (err) => {
+      logger.warn({ err, tenantId: this.tenantId }, 'Personal WS error');
+    });
+    // Quan trọng: không bật retryOnClose thì WS đứt = mất hết tin forward
+    this.api.listener.start({ retryOnClose: true });
     this.started = true;
     logger.info({ tenantId: this.tenantId }, 'Personal listener started');
   }

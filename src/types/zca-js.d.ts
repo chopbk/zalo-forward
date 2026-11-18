@@ -129,8 +129,10 @@ declare module 'zca-js' {
     }>;
     getOwnId: () => string;
     listener: {
-      on: (event: 'message', cb: (message: ZaloListenerMessage) => void) => void;
-      start: () => void;
+      on(event: 'message', cb: (message: ZaloListenerMessage) => void): void;
+      on(event: 'disconnected' | 'closed', cb: (code: number, reason: string) => void): void;
+      on(event: 'error' | 'connected', cb: (arg?: unknown) => void): void;
+      start: (opts?: { retryOnClose?: boolean }) => void;
       stop: () => void;
     };
   };
