@@ -68,8 +68,9 @@ export function reformatSignalMessage(text: string): string | null {
 
 /** 🔹/🔸 [Chờ] Mua|Bán ... tại giá ... (không có chữ Cập nhật) */
 function tryPendingNew(t: string): string | null {
+  // Không dùng [🔹🔸] — surrogate pair trong character class sẽ match sai
   const m = t.match(
-    /^[🔹🔸]\s*\[Chờ\]\s*(Mua|Bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\s+tại giá\s+([\d.,]+)\s*\n+Dừng lỗ:\s*([\d.,]+)\s*[·•.]\s*Chốt lời:\s*([\d.,]+)\s*\n+([\s\S]+)$/i,
+    /^(?:🔹|🔸)\s*\[Chờ\]\s*(Mua|Bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\s+tại giá\s+([\d.,]+)\s*\n+Dừng lỗ:\s*([\d.,]+)\s*[·•.]\s*Chốt lời:\s*([\d.,]+)\s*\n+([\s\S]+)$/i,
   );
   if (!m) return null;
   const side = sideLabel(m[1]!);
@@ -230,7 +231,7 @@ function tryTakeProfit(t: string): string | null {
  */
 function tryStopLoss(t: string): string | null {
   const detailed = t.match(
-    /^[❌⛔]\s+(.+?)\s+\(([A-Z0-9]+)\)\s*\[(\d+)\]\s+chạm dừng lỗ\s+tại\s+([\d.,]+)\s*\(giá vào\s+([\d.,]+)\)\.?\s*\n+Lỗ:\s*([+\-−][\d.,]+)\s*USD\/Lot\s*\n+Lúc\s+(\d{1,2}:\d{2}:\d{2})\s*$/i,
+    /^(?:❌|⛔)\s+(.+?)\s+\(([A-Z0-9]+)\)\s*\[(\d+)\]\s+chạm dừng lỗ\s+tại\s+([\d.,]+)\s*\(giá vào\s+([\d.,]+)\)\.?\s*\n+Lỗ:\s*([+\-−][\d.,]+)\s*USD\/Lot\s*\n+Lúc\s+(\d{1,2}:\d{2}:\d{2})\s*$/i,
   );
   if (detailed) {
     const product = formatProductName(detailed[1]!, 'short');
@@ -254,7 +255,7 @@ function tryStopLoss(t: string): string | null {
   }
 
   const simple = t.match(
-    /^[⛔❌]\s+(.+?)\s+\(([A-Z0-9]+)\)\s*\[(\d+)\]\s+chạm dừng lỗ\.?\s*(.*)$/is,
+    /^(?:⛔|❌)\s+(.+?)\s+\(([A-Z0-9]+)\)\s*\[(\d+)\]\s+chạm dừng lỗ\.?\s*(.*)$/is,
   );
   if (!simple) return null;
   const product = formatProductName(simple[1]!, 'short');
