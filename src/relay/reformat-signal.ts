@@ -66,10 +66,10 @@ export function reformatSignalMessage(text: string): string | null {
   );
 }
 
-/** 🔹 [Chờ] Mua ... tại giá ... */
+/** 🔹/🔸 [Chờ] Mua|Bán ... tại giá ... (không có chữ Cập nhật) */
 function tryPendingNew(t: string): string | null {
   const m = t.match(
-    /^🔹\s*\[Chờ\]\s*(Mua|Bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\s+tại giá\s+([\d.,]+)\s*\n+Dừng lỗ:\s*([\d.,]+)\s*[·•.]\s*Chốt lời:\s*([\d.,]+)\s*\n+([\s\S]+)$/i,
+    /^[🔹🔸]\s*\[Chờ\]\s*(Mua|Bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\s+tại giá\s+([\d.,]+)\s*\n+Dừng lỗ:\s*([\d.,]+)\s*[·•.]\s*Chốt lời:\s*([\d.,]+)\s*\n+([\s\S]+)$/i,
   );
   if (!m) return null;
   const side = sideLabel(m[1]!);

@@ -44,6 +44,21 @@ A/C đặt lệnh Buy Limit nhé ạ!`;
     );
   });
 
+  it('pending new sell with orange diamond', () => {
+    const old = `🔸 [Chờ] Bán Dầu đậu tương tháng 1 (ZLEF27) tại giá 61.700
+Dừng lỗ: 62.458 · Chốt lời: 59.578
+A/C đặt lệnh Sell Limit nhé ạ!`;
+    expect(reformatSignalMessage(old)).toBe(
+      `🔔 [CHỜ BÁN] DẦU ĐẬU TƯƠNG THÁNG 1 (ZLEF27)
+
+🔸 Giá chờ bán (Sell Limit): 61.700
+🛑 Dừng lỗ: 62.458
+🎯 Chốt lời: 59.578
+
+📌 A/C tiến hành đặt lệnh Sell Limit theo mức giá trên, đồng thời thiết lập Dừng lỗ và Chốt lời tương ứng nhé ạ`,
+    );
+  });
+
   it('pending update sell', () => {
     const old = `🔸 [Chờ] Cập nhật lệnh chờ bán Robusta tháng 1 (LRCF27).
 Giá chờ: 3135.0 (cũ 3162.9)
