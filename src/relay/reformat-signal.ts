@@ -217,15 +217,46 @@ function tryTakeProfit(t: string): string | null {
   ].join('\n');
 }
 
-/** ⛔ ... chạm dừng lỗ */
+/**
+ * STP chi tiết:
+ * ❌ Đậu tương tháng 1 (ZSEF27) [1] chạm dừng lỗ tại 1223.26 (giá vào 1229.50).
+ * Lỗ: -312.00 USD/Lot
+ * Lúc 14:05:48
+ *
+ * STP ngắn: ⛔ ... chạm dừng lỗ. ...
+ */
 function tryStopLoss(t: string): string | null {
-  const m = t.match(
-    /^⛔\s+(.+?)\s+\(([A-Z0-9]+)\)\s*\[(\d+)\]\s+chạm dừng lỗ\.?\s*(.*)$/is,
+  const detailed = t.match(
+    /^[❌⛔]\s+(.+?)\s+\(([A-Z0-9]+)\)\s*\[(\d+)\]\s+chạm dừng lỗ\s+tại\s+([\d.,]+)\s*\(giá vào\s+([\d.,]+)\)\.?\s*\n+Lỗ:\s*([+\-−][\d.,]+)\s*USD\/Lot\s*\n+Lúc\s+(\d{1,2}:\d{2}:\d{2})\s*$/i,
   );
-  if (!m) return null;
-  const product = formatProductName(m[1]!, 'short');
-  const code = m[2]!;
-  const ticket = m[3]!;
+  if (detailed) {
+    const product = formatProductName(detailed[1]!, 'short');
+    const code = detailed[2]!;
+    const ticket = detailed[3]!;
+    const sl = formatPrice(detailed[4]!);
+    const entry = formatPrice(detailed[5]!);
+    const loss = formatPnl(detailed[6]!);
+    const time = detailed[7]!;
+    return [
+      `⛔ [CHẠM DỪNG LỖ] ${product} (${code}) [${ticket}]`,
+      '',
+      `🛑 Giá dừng lỗ: ${sl}`,
+      `💰 Giá vào lệnh: ${entry}`,
+      `🔴 Lỗ: ${loss} USD/Lot`,
+      '',
+      `🕒 Thời gian: ${time}`,
+      '',
+      `💙 HCT tiếp tục theo dõi thị trường và chờ đợi cơ hội giao dịch tốt hơn. Mong A/C giữ vững kỷ luật giao dịch`,
+    ].join('\n');
+  }
+
+  const simple = t.match(
+    /^[⛔❌]\s+(.+?)\s+\(([A-Z0-9]+)\)\s*\[(\d+)\]\s+chạm dừng lỗ\.?\s*(.*)$/is,
+  );
+  if (!simple) return null;
+  const product = formatProductName(simple[1]!, 'short');
+  const code = simple[2]!;
+  const ticket = simple[3]!;
 
   return [
     `⛔ [CHẠM DỪNG LỖ] ${product} (${code}) [${ticket}]`,

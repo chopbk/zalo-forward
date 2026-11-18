@@ -136,13 +136,30 @@ Lúc 09:06:05`;
     );
   });
 
-  it('stop loss', () => {
+  it('stop loss simple', () => {
     const old = `⛔ Lúa mỳ tháng 12 (ZWAZ26) [2] chạm dừng lỗ. Chờ cơ hội tốt hơn.`;
     expect(reformatSignalMessage(old)).toBe(
       `⛔ [CHẠM DỪNG LỖ] LÚA MỲ T12 (ZWAZ26) [2]
 
 🛑 Lệnh đã chạm mức Stop Loss.
 📌 Vị thế được đóng theo mức dừng lỗ.
+
+💙 HCT tiếp tục theo dõi thị trường và chờ đợi cơ hội giao dịch tốt hơn. Mong A/C giữ vững kỷ luật giao dịch`,
+    );
+  });
+
+  it('stop loss detailed with price and pnl', () => {
+    const old = `❌ Đậu tương tháng 1 (ZSEF27) [1] chạm dừng lỗ tại 1223.26 (giá vào 1229.50).
+Lỗ: -312.00 USD/Lot
+Lúc 14:05:48`;
+    expect(reformatSignalMessage(old)).toBe(
+      `⛔ [CHẠM DỪNG LỖ] ĐẬU TƯƠNG T1 (ZSEF27) [1]
+
+🛑 Giá dừng lỗ: 1,223.26
+💰 Giá vào lệnh: 1,229.50
+🔴 Lỗ: −312 USD/Lot
+
+🕒 Thời gian: 14:05:48
 
 💙 HCT tiếp tục theo dõi thị trường và chờ đợi cơ hội giao dịch tốt hơn. Mong A/C giữ vững kỷ luật giao dịch`,
     );
