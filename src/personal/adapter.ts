@@ -211,6 +211,20 @@ export class PersonalAccountAdapter {
 
     // Bỏ echo của chính lệnh gửi đi (tránh loop khi có luật ngược)
     if (normalized.isSelf && this.isEchoOutbound(normalized.groupId, normalized.text)) {
+      // Bổ sung cliMsgId cho neo reply tín hiệu (sendMessage chỉ trả msgId)
+      const raw = message.data as {
+        msgId?: string | number;
+        cliMsgId?: string | number;
+      };
+      if (raw.msgId != null && raw.cliMsgId != null) {
+        const { patchSignalOrderCliMsgId } = await import('../db/signal-orders.js');
+        patchSignalOrderCliMsgId(
+          this.tenantId,
+          normalized.groupId,
+          String(raw.msgId),
+          String(raw.cliMsgId),
+        );
+      }
       logger.debug(
         { tenantId: this.tenantId, groupId: normalized.groupId },
         'Skip outbound echo',
@@ -327,23 +341,34 @@ export class PersonalAccountAdapter {
   sendText(
     groupId: string,
     text: string,
-    opts?: { styles?: ForwardStyle[]; mentions?: ForwardMention[] },
-  ): Promise<{ messageId: string }> {
+    opts?: {
+      styles?: ForwardStyle[];
+      mentions?: ForwardMention[];
+      quote?: import('zca-js').SendMessageQuote;
+    },
+  ): Promise<{ messageId: string; cliMsgId: string; ts: string }> {
     return this.queue.enqueue(async () => {
       this.markOutbound(groupId, text);
       const styles = opts?.styles?.length ? opts.styles : undefined;
       const mentions = opts?.mentions?.length ? opts.mentions : undefined;
+      const quote = opts?.quote;
+      // clientId trong zca-js = Date.now() — lấy gần đúng trước khi gọi API
+      const cliMsgId = String(Date.now());
+      const ts = cliMsgId;
       const payload =
-        styles || mentions
+        styles || mentions || quote
           ? {
               msg: text,
               ...(styles ? { styles } : {}),
               ...(mentions ? { mentions } : {}),
+              ...(quote ? { quote } : {}),
             }
           : text;
       const result = await this.api.sendMessage(payload, groupId, ThreadType.Group);
       return {
         messageId: String(result.message?.msgId ?? 'ok'),
+        cliMsgId,
+        ts,
       };
     });
   }

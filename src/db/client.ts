@@ -41,7 +41,7 @@ export type ForwardRuleRow = {
 
 let db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 4;
 
 export function getDb(): Database.Database {
   if (db) return db;
@@ -179,6 +179,92 @@ function migrate(database: Database.Database): void {
         display_name TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+    `);
+    database
+      .prepare(
+        `INSERT INTO schema_meta(key, value) VALUES('version', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run('2');
+    logger.info({ version: 2 }, 'DB migrated');
+  }
+
+  const after2 = database
+    .prepare(`SELECT value FROM schema_meta WHERE key = 'version'`)
+    .get() as { value: string } | undefined;
+  const ver2 = after2 ? Number(after2.value) : 0;
+
+  if (ver2 < 3) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS signal_order_msgs (
+        tenant_id INTEGER NOT NULL,
+        dest_group_id TEXT NOT NULL,
+        order_key TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('pending','filled')),
+        msg_id TEXT NOT NULL,
+        cli_msg_id TEXT NOT NULL DEFAULT '',
+        uid_from TEXT NOT NULL,
+        content TEXT NOT NULL,
+        msg_type TEXT NOT NULL DEFAULT 'webchat',
+        ts TEXT NOT NULL,
+        ttl INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (tenant_id, dest_group_id, order_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_signal_order_msg_id
+        ON signal_order_msgs(tenant_id, dest_group_id, msg_id);
+    `);
+    database
+      .prepare(
+        `INSERT INTO schema_meta(key, value) VALUES('version', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run('3');
+    logger.info({ version: 3 }, 'DB migrated');
+  }
+
+  const after3 = database
+    .prepare(`SELECT value FROM schema_meta WHERE key = 'version'`)
+    .get() as { value: string } | undefined;
+  const ver3 = after3 ? Number(after3.value) : 0;
+
+  if (ver3 < 4) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS signal_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant_id INTEGER NOT NULL,
+        source_group_id TEXT NOT NULL,
+        source_message_id TEXT NOT NULL,
+        source_ts INTEGER,
+        dest_group_id TEXT NOT NULL,
+        dest_message_id TEXT,
+        sender_name TEXT,
+        kind TEXT NOT NULL DEFAULT 'other',
+        code TEXT,
+        ticket TEXT,
+        side TEXT,
+        product TEXT,
+        order_key TEXT,
+        entry_price TEXT,
+        sl_price TEXT,
+        tp_price TEXT,
+        hit_price TEXT,
+        pnl_usd TEXT,
+        tp_level TEXT,
+        signal_time TEXT,
+        raw_text TEXT NOT NULL,
+        forwarded_text TEXT NOT NULL,
+        reformatted INTEGER NOT NULL DEFAULT 0,
+        parsed_json TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (tenant_id, source_message_id, dest_group_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_signal_events_code
+        ON signal_events(tenant_id, code, id);
+      CREATE INDEX IF NOT EXISTS idx_signal_events_order
+        ON signal_events(tenant_id, order_key, id);
+      CREATE INDEX IF NOT EXISTS idx_signal_events_kind
+        ON signal_events(tenant_id, kind, id);
     `);
     database
       .prepare(

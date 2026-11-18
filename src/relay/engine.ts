@@ -8,6 +8,14 @@ import {
   markJobFailedOrRetry,
   type ForwardJobPayload,
 } from '../db/jobs.js';
+import {
+  resolveSignalQuote,
+  upsertSignalOrder,
+} from '../db/signal-orders.js';
+import {
+  insertSignalEvent,
+  updateSignalEventDestMessage,
+} from '../db/signal-events.js';
 import { canRelay, findTenantById, getSession, type Tenant } from '../db/tenants.js';
 import type { NormalizedGroupMessage } from './normalize.js';
 import { resolveDestinations } from './match.js';
@@ -18,6 +26,7 @@ import {
 } from './styles.js';
 import { sessionManager } from '../personal/manager.js';
 import { reformatSignalMessage } from './reformat-signal.js';
+import { parseSignalMeta, type SignalMeta } from './signal-meta.js';
 
 let drainTimer: ReturnType<typeof setInterval> | null = null;
 let draining = false;
@@ -66,11 +75,14 @@ export async function handleGroupInbound(
   }
 
   const body = formatForwardBody(msg);
+  const signal = parseSignalMeta(msg.text ?? '') ?? parseSignalMeta(body.text);
   const hasImages = msg.images.length > 0;
   // Có styles RTF → bắt buộc sendMessage+styles (forwardMessage của zca-js mất format)
-  // Native forward chỉ khi text thuần không style; tin đã reformat phải sendText (không Share gốc)
+  // Native forward chỉ khi text thuần không style; tin đã reformat / cần quote phải sendText
+  const needsSignalReply = !!signal;
   const preferNativeForward =
     !body.reformatted &&
+    !needsSignalReply &&
     !hasImages &&
     !!body.text.trim() &&
     body.styles.length === 0;
@@ -86,18 +98,55 @@ export async function handleGroupInbound(
     );
   }
 
-  const items: ForwardJobPayload[] = [...destSet].map((destGroupId) => ({
-    sourceGroupId: msg.groupId,
-    destGroupId,
-    text: body.text,
-    images: hasImages ? msg.images : undefined,
-    styles: body.styles.length > 0 ? body.styles : undefined,
-    mentions: body.mentions,
-    sourceMessageId: msg.messageId,
-    sourceTs: msg.ts,
-    preferNativeForward,
-    senderName: msg.senderName,
-  }));
+  const items: ForwardJobPayload[] = [...destSet].map((destGroupId) => {
+    const signalStore = buildSignalStore(signal);
+    const signalQuote =
+      signal && signal.quotePrefer.length > 0
+        ? {
+            prefer: signal.quotePrefer,
+            pendingKey: signal.pendingKey,
+            filledKey: signal.filledKey,
+          }
+        : undefined;
+
+    return {
+      sourceGroupId: msg.groupId,
+      destGroupId,
+      text: body.text,
+      rawText: msg.text ?? '',
+      reformatted: body.reformatted,
+      images: hasImages ? msg.images : undefined,
+      styles: body.styles.length > 0 ? body.styles : undefined,
+      mentions: body.mentions,
+      sourceMessageId: msg.messageId,
+      sourceTs: msg.ts,
+      preferNativeForward,
+      senderName: msg.senderName,
+      signalQuote,
+      signalStore,
+      signalMeta: signal,
+    };
+  });
+
+  // Lưu sớm để backtest kể cả khi job gửi lỗi / retry
+  for (const item of items) {
+    try {
+      insertSignalEvent({
+        tenantId: tenant.id,
+        sourceGroupId: item.sourceGroupId,
+        sourceMessageId: item.sourceMessageId,
+        sourceTs: item.sourceTs,
+        destGroupId: item.destGroupId,
+        senderName: item.senderName,
+        rawText: item.rawText ?? item.text ?? '',
+        forwardedText: item.text ?? '',
+        reformatted: !!item.reformatted,
+        signal: item.signalMeta ?? null,
+      });
+    } catch (err) {
+      logger.warn({ err, messageId: item.sourceMessageId }, 'insertSignalEvent failed');
+    }
+  }
 
   enqueueForwardJobs(tenant.id, items);
   logger.info(
@@ -111,9 +160,32 @@ export async function handleGroupInbound(
       styles: body.styles?.length ?? 0,
       preferNativeForward,
       reformatted: body.reformatted,
+      signalKind: signal?.kind,
+      willQuote: !!signal && signal.quotePrefer.length > 0,
     },
     'Enqueued forward jobs',
   );
+}
+
+function buildSignalStore(
+  signal: SignalMeta | null,
+): ForwardJobPayload['signalStore'] {
+  if (!signal?.storeAs) return undefined;
+  if (signal.storeAs === 'pending') {
+    return {
+      kind: 'pending',
+      orderKey: signal.pendingKey,
+      signalKind: signal.kind,
+    };
+  }
+  if (signal.storeAs === 'filled' && signal.filledKey) {
+    return {
+      kind: 'filled',
+      orderKey: signal.filledKey,
+      signalKind: signal.kind,
+    };
+  }
+  return undefined;
 }
 
 /** Copy nội dung gốc; nếu khớp mẫu tín hiệu cũ → đổi sang format mới. */
@@ -170,15 +242,36 @@ async function processOneJob(): Promise<boolean> {
       );
     } else if (payload.text) {
       let sent = false;
-      if (payload.preferNativeForward) {
+      let sentMeta: { messageId: string; cliMsgId: string; ts: string } | null =
+        null;
+
+      const quote = payload.signalQuote
+        ? resolveSignalQuote(
+            job.tenantId,
+            payload.destGroupId,
+            payload.signalQuote.prefer,
+            {
+              pendingKey: payload.signalQuote.pendingKey,
+              filledKey: payload.signalQuote.filledKey,
+            },
+          )
+        : null;
+
+      // Có quote → luôn sendMessage (native forward không reply được)
+      if (payload.preferNativeForward && !quote) {
         try {
           const tsRaw = payload.sourceTs ?? Date.now();
           const ts = tsRaw < 1e12 ? tsRaw * 1000 : tsRaw;
-          await adapter.forwardNative(payload.destGroupId, payload.text, {
+          const r = await adapter.forwardNative(payload.destGroupId, payload.text, {
             id: payload.sourceMessageId,
             ts,
           });
           sent = true;
+          sentMeta = {
+            messageId: r.messageId,
+            cliMsgId: '',
+            ts: String(Date.now()),
+          };
           logger.info(
             { jobId: job.id, dest: payload.destGroupId },
             'Forwarded via native forwardMessage',
@@ -191,14 +284,70 @@ async function processOneJob(): Promise<boolean> {
         }
       }
       if (!sent) {
-        await adapter.sendText(payload.destGroupId, payload.text, {
-          styles: payload.styles,
-          mentions: payload.mentions,
-        });
-        logger.info(
-          { jobId: job.id, dest: payload.destGroupId },
-          'Forwarded via sendMessage',
-        );
+        try {
+          const r = await adapter.sendText(payload.destGroupId, payload.text, {
+            styles: payload.styles,
+            mentions: payload.mentions,
+            quote: quote ?? undefined,
+          });
+          sentMeta = r;
+          logger.info(
+            {
+              jobId: job.id,
+              dest: payload.destGroupId,
+              quoted: !!quote,
+              quoteMsgId: quote?.msgId,
+            },
+            'Forwarded via sendMessage',
+          );
+        } catch (err) {
+          if (!quote) throw err;
+          logger.warn(
+            { err, jobId: job.id },
+            'sendMessage with quote failed — retry without quote',
+          );
+          const r = await adapter.sendText(payload.destGroupId, payload.text, {
+            styles: payload.styles,
+            mentions: payload.mentions,
+          });
+          sentMeta = r;
+        }
+      }
+
+      if (sentMeta && sentMeta.messageId !== 'ok') {
+        try {
+          updateSignalEventDestMessage(
+            job.tenantId,
+            payload.sourceMessageId,
+            payload.destGroupId,
+            sentMeta.messageId,
+          );
+        } catch (err) {
+          logger.warn({ err, jobId: job.id }, 'updateSignalEventDestMessage failed');
+        }
+
+        if (payload.signalStore) {
+          upsertSignalOrder({
+            tenantId: job.tenantId,
+            destGroupId: payload.destGroupId,
+            orderKey: payload.signalStore.orderKey,
+            kind: payload.signalStore.kind,
+            msgId: sentMeta.messageId,
+            cliMsgId: sentMeta.cliMsgId,
+            uidFrom: adapter.getOwnId(),
+            content: (payload.text ?? '').split('\n')[0]?.slice(0, 200) ?? '',
+            ts: sentMeta.ts,
+          });
+          logger.info(
+            {
+              jobId: job.id,
+              orderKey: payload.signalStore.orderKey,
+              kind: payload.signalStore.kind,
+              msgId: sentMeta.messageId,
+            },
+            'Stored signal order anchor for replies',
+          );
+        }
       }
     }
     markJobDone(job.id);

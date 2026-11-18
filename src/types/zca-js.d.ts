@@ -44,11 +44,29 @@ declare module 'zca-js' {
     len: number;
   };
 
+  export type SendMessageQuote = {
+    content: string | Record<string, unknown>;
+    msgType: string;
+    propertyExt?: {
+      color?: number;
+      size?: number;
+      type?: number;
+      subType?: number;
+      ext?: string;
+    };
+    uidFrom: string;
+    msgId: string;
+    cliMsgId: string;
+    ts: string;
+    ttl?: number;
+  };
+
   export type MessageContent = {
     msg: string;
     styles?: TextStyleRange[];
     mentions?: MentionRange[];
     attachments?: AttachmentSource | AttachmentSource[];
+    quote?: SendMessageQuote;
     ttl?: number;
   };
 

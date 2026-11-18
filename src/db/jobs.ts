@@ -2,11 +2,15 @@ import { getDb, type JobStatus } from './client.js';
 import { getEnv } from '../config/env.js';
 
 import type { ForwardMention, ForwardStyle } from '../relay/styles.js';
+import type { SignalKind, SignalMeta } from '../relay/signal-meta.js';
 
 export type ForwardJobPayload = {
   sourceGroupId: string;
   destGroupId: string;
   text?: string;
+  /** Text gốc trước reformat — lưu backtest. */
+  rawText?: string;
+  reformatted?: boolean;
   images?: Array<{ url: string }>;
   styles?: ForwardStyle[];
   mentions?: ForwardMention[];
@@ -15,6 +19,20 @@ export type ForwardJobPayload = {
   /** Ưu tiên api.forwardMessage (gần nút Share Zalo) cho tin text. */
   preferNativeForward?: boolean;
   senderName?: string;
+  /** Lookup quote lúc gửi (sau echo có cliMsgId). */
+  signalQuote?: {
+    prefer: Array<'filled' | 'pending'>;
+    pendingKey: string;
+    filledKey?: string;
+  };
+  /** Sau khi gửi thành công — lưu neo reply. */
+  signalStore?: {
+    kind: 'pending' | 'filled';
+    orderKey: string;
+    signalKind: SignalKind;
+  };
+  /** Snapshot parse tín hiệu để ghi signal_events. */
+  signalMeta?: SignalMeta | null;
 };
 
 export type ForwardJob = {
