@@ -17,6 +17,7 @@ import {
   type ForwardStyle,
 } from './styles.js';
 import { sessionManager } from '../personal/manager.js';
+import { reformatSignalMessage } from './reformat-signal.js';
 
 let drainTimer: ReturnType<typeof setInterval> | null = null;
 let draining = false;
@@ -67,9 +68,12 @@ export async function handleGroupInbound(
   const body = formatForwardBody(msg);
   const hasImages = msg.images.length > 0;
   // Có styles RTF → bắt buộc sendMessage+styles (forwardMessage của zca-js mất format)
-  // Native forward chỉ khi text thuần không style
+  // Native forward chỉ khi text thuần không style; tin đã reformat phải sendText (không Share gốc)
   const preferNativeForward =
-    !hasImages && !!body.text.trim() && body.styles.length === 0;
+    !body.reformatted &&
+    !hasImages &&
+    !!body.text.trim() &&
+    body.styles.length === 0;
 
   if (body.styles.length > 0) {
     logger.info(
@@ -106,25 +110,36 @@ export async function handleGroupInbound(
       isSelf: msg.isSelf,
       styles: body.styles?.length ?? 0,
       preferNativeForward,
+      reformatted: body.reformatted,
     },
     'Enqueued forward jobs',
   );
 }
 
-/** Copy đúng nội dung gốc — không gắn tên người gửi. */
+/** Copy nội dung gốc; nếu khớp mẫu tín hiệu cũ → đổi sang format mới. */
 function formatForwardBody(msg: NormalizedGroupMessage): {
   text: string;
   styles: ForwardStyle[];
   mentions?: ForwardMention[];
+  reformatted: boolean;
 } {
-  const text = msg.text ?? '';
-  const styles = clipStylesToText(msg.styles ?? [], text);
+  const original = msg.text ?? '';
+  const reformatted = reformatSignalMessage(original);
+  if (reformatted) {
+    return {
+      text: reformatted,
+      styles: [],
+      mentions: undefined,
+      reformatted: true,
+    };
+  }
+  const styles = clipStylesToText(msg.styles ?? [], original);
   const mentions = msg.mentions ?? [];
-
   return {
-    text,
+    text: original,
     styles,
     mentions: mentions.length > 0 ? mentions : undefined,
+    reformatted: false,
   };
 }
 
