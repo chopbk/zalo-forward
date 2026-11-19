@@ -87,6 +87,14 @@ declare module 'zca-js' {
     imageMetadataGetter?: ImageMetadataGetter;
   };
 
+  export type ZaloFriend = {
+    userId: string;
+    username?: string;
+    displayName?: string;
+    zaloName?: string;
+    lastActionTime?: number;
+  };
+
   export type SendMessageResult = {
     message?: { msgId?: string | number } | null;
     attachment?: Array<{ msgId?: string | number }>;
@@ -119,6 +127,7 @@ declare module 'zca-js' {
       threadIds: string[],
       type?: ThreadType,
     ) => Promise<ForwardMessageResponse>;
+    getAllFriends: (count?: number, page?: number) => Promise<ZaloFriend[]>;
     getAllGroups: () => Promise<{ gridVerMap?: Record<string, string> }>;
     getGroupInfo: (groupId: string | string[]) => Promise<{
       gridInfoMap?: Record<
@@ -128,6 +137,11 @@ declare module 'zca-js' {
     }>;
     getUnreadMark?: () => Promise<{
       data?: {
+        convsUser?: Array<{
+          id?: number | string;
+          fromUid?: number | string;
+          ts?: number;
+        }>;
         convsGroup?: Array<{
           id?: number | string;
           fromUid?: number | string;

@@ -166,6 +166,14 @@ export class SessionManager {
     }
     return groups;
   }
+
+  async refreshFriends(
+    tenantId: number,
+  ): Promise<Array<{ userId: string; name: string; lastActiveAt?: number }>> {
+    const adapter = this.getAdapter(tenantId);
+    if (!adapter) throw new Error('Session chưa chạy — /login rồi /resume');
+    return adapter.listFriends();
+  }
 }
 
 export const sessionManager = new SessionManager();

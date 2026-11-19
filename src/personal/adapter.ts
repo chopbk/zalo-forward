@@ -235,6 +235,74 @@ export class PersonalAccountAdapter {
     await this.handler(normalized);
   }
 
+  /**
+   * Chat 1-1 (bạn bè) — id = userId Zalo.
+   * Sắp xếp: ghim → unread/lastAction → tên.
+   */
+  async listFriends(): Promise<
+    Array<{ userId: string; name: string; lastActiveAt?: number; pinned?: boolean }>
+  > {
+    const friends = await this.api.getAllFriends();
+    const unreadTs = new Map<string, number>();
+    try {
+      if (typeof this.api.getUnreadMark === 'function') {
+        const unread = await this.api.getUnreadMark();
+        for (const c of unread.data?.convsUser ?? []) {
+          const id = String(c.fromUid ?? c.id ?? '');
+          const ts = normalizeZaloTs(c.ts != null ? Number(c.ts) : undefined);
+          if (!id || ts == null) continue;
+          unreadTs.set(id, Math.max(unreadTs.get(id) ?? 0, ts));
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, tenantId: this.tenantId }, 'getUnreadMark (user) failed');
+    }
+
+    const pinned = new Set<string>();
+    try {
+      if (typeof this.api.getPinConversations === 'function') {
+        const pins = await this.api.getPinConversations();
+        for (const p of pins.conversations ?? []) {
+          const raw = String(p);
+          // Pin user thường dạng u<id>
+          if (raw.startsWith('u')) pinned.add(raw.slice(1));
+          else if (!raw.startsWith('g')) pinned.add(normalizePinId(raw));
+        }
+      }
+    } catch (err) {
+      logger.warn({ err, tenantId: this.tenantId }, 'getPinConversations (user) failed');
+    }
+
+    const items = (friends ?? []).map((f) => {
+      const userId = String(f.userId);
+      const name =
+        (f.displayName || f.zaloName || f.username || userId).trim() || userId;
+      const lastAction = normalizeZaloTs(f.lastActionTime);
+      const lastActiveAt = Math.max(
+        unreadTs.get(userId) ?? 0,
+        lastAction ?? 0,
+      ) || undefined;
+      return {
+        userId,
+        name,
+        lastActiveAt,
+        pinned: pinned.has(userId),
+      };
+    });
+
+    items.sort((a, b) => {
+      const ap = a.pinned ? 1 : 0;
+      const bp = b.pinned ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      const at = a.lastActiveAt ?? 0;
+      const bt = b.lastActiveAt ?? 0;
+      if (bt !== at) return bt - at;
+      return a.name.localeCompare(b.name, 'vi', { sensitivity: 'base' });
+    });
+
+    return items;
+  }
+
   async listGroups(): Promise<
     Array<{ groupId: string; name: string; lastActiveAt?: number; pinned?: boolean }>
   > {

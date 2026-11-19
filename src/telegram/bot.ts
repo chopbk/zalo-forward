@@ -348,27 +348,46 @@ function wireHandlers(bot: Bot): void {
     await setTopicMode(ctx, false);
   });
 
-  bot.command(['zalochats', 'zalo_chats', 'groups'], async (ctx) => {
+  bot.command(['zalochats', 'zalo_chats', 'groups', 'friends', 'zalofriends'], async (ctx) => {
     const forum = requireForumAdmin(ctx);
     if (!forum) return;
     if (!sessionManager.isRunning(forum.cfg.tenantId)) {
       await ctx.reply('Session Zalo chưa chạy. User cần /login trên Zalo bot.');
       return;
     }
+    const cmd = (ctx.message?.text ?? '').split(/\s+/)[0]?.replace(/^\//, '').split('@')[0] ?? '';
+    const arg = (ctx.message?.text ?? '').replace(/^\/\S+\s*/, '').trim().toLowerCase();
+    const focusFriends =
+      cmd === 'friends' ||
+      cmd === 'zalofriends' ||
+      arg === 'user' ||
+      arg === 'users' ||
+      arg === '1-1';
+    const focusGroupsOnly = arg === 'group' || arg === 'groups';
     try {
-      await sessionManager.refreshGroups(forum.cfg.tenantId);
-      const { listGroupCache } = await import('../db/rules.js');
-      const groups = listGroupCache(forum.cfg.tenantId).slice(0, 30);
-      if (groups.length === 0) {
-        await ctx.reply('Không có group trong cache.');
-        return;
+      const lines: string[] = [];
+      if (focusFriends || (!focusGroupsOnly && cmd !== 'groups')) {
+        const friends = await sessionManager.refreshFriends(forum.cfg.tenantId);
+        lines.push('Chat 1-1:');
+        if (friends.length === 0) lines.push('(trống)');
+        else {
+          for (const f of friends.slice(0, 40)) {
+            lines.push(`${f.name} — \`${f.userId}\``);
+          }
+        }
       }
-      await ctx.reply(
-        groups
-          .map((g) => `${g.name ?? '(no name)'} — \`${g.groupId}\``)
-          .join('\n'),
-        { parse_mode: 'Markdown' },
-      );
+      if (!focusFriends) {
+        const groups = await sessionManager.refreshGroups(forum.cfg.tenantId);
+        if (lines.length) lines.push('');
+        lines.push('Group:');
+        if (groups.length === 0) lines.push('(trống)');
+        else {
+          for (const g of groups.slice(0, 40)) {
+            lines.push(`${g.name} — \`${g.groupId}\``);
+          }
+        }
+      }
+      await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
     } catch (err) {
       await ctx.reply(`Lỗi: ${err instanceof Error ? err.message : String(err)}`);
     }

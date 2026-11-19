@@ -49,7 +49,9 @@ Sau đó tin trong group nguồn (đúng luật) sẽ được chuyển sang đ�
 |------|--------|
 | `/login` | Tạo QR → bot gửi ảnh/link QR vào chat → quét bằng Zalo trên điện thoại |
 | `/logout` | Đăng xuất nick, dừng listener / chuyển tiếp |
-| `/groups` | Liệt kê group của nick đã login (tên + **id**) — dùng id này cho `/addrule` |
+| `/groups` | Liệt kê **group** (tên + **id**) — dùng cho `/addrule` / `/addtg` |
+| `/friends` | Liệt kê **chat 1-1 / bạn bè** (tên + **user id**) |
+| `/chats` | Tất cả: 1-1 + group. Lọc: `/chats user` \| `/chats group` |
 
 **Tips `/login`:**
 

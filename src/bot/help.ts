@@ -4,7 +4,7 @@ Setup:
 1) /start — đăng ký (chờ admin duyệt)
 2) /login — quét QR nick Zalo (nên nick phụ)
    /stop — tạm dừng login QR đang chờ quét
-3) /groups — lấy id group
+3) /groups — id group · /friends — id chat 1-1 · /chats — cả hai
 4) /addrule ... — Zalo→Zalo
 5) Telegram (mỗi tenant 1 forum):
    /tgbind <forum_id> → /tgadmins <tg_user_id,...>
@@ -22,7 +22,8 @@ Setup:
 Chi tiết: /help addrule · /help addtg
 
 Lệnh khác:
-/status · /tgstatus · /tgbind · /tgadmins · /tgunbind
+/status · /groups · /friends · /chats [user|group]
+/tgstatus · /tgbind · /tgadmins · /tgunbind
 /rules set <id> <đích,...> all
 /rules on|off|del <id>
 /keywords <id_luật> <từ_khóa,...>
@@ -33,7 +34,8 @@ Lệnh khác:
 /iamadmin <mật_khẩu>
 /help
 
-Lưu ý: automation Zalo không chính thức — rủi ro hạn chế nick.`;
+Lưu ý: automation Zalo không chính thức — rủi ro hạn chế nick.
+Forward MVP hiện hỗ trợ nguồn **group**; /friends chỉ để lấy user id.`;
 
 export const ADD_RULE_HELP = `Hướng dẫn /addrule — 1 lệnh duy nhất
 

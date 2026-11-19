@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "telegram:ids": "tsx scripts/telegram-ids.ts"
+    "telegram:ids": "tsx scripts/telegram-ids.ts",
+    "deploy": "bash scripts/deploy.sh"
   },
   "dependencies": {
     "better-sqlite3": "9.6.0",
