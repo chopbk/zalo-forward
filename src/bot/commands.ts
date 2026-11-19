@@ -29,6 +29,7 @@ import {
   unbindTenantForum,
 } from '../db/tenant-telegram.js';
 import { MAX_QR_SENDS, startQrLogin, stopQrLogin } from '../personal/login-qr.js';
+import { formatRelativeTime } from '../personal/adapter.js';
 import { sessionManager } from '../personal/manager.js';
 import { detectSimpleCycles } from '../relay/match.js';
 import { verifyTelegramConfig, verifyTelegramForum } from '../telegram/client.js';
@@ -479,34 +480,61 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
         if (friends.length === 0) {
           lines.push('Chat 1-1: (trống)');
         } else {
-          lines.push('Chat 1-1 / bạn bè (ghim → gần đây):');
+          lines.push('Chat 1-1 / bạn bè (theo thời gian tin):');
           for (let i = 0; i < friends.length; i++) {
             const f = friends[i]!;
-            lines.push(`${i + 1}. ${f.name} — id=${f.userId}`);
+            const ago = formatRelativeTime(f.lastActiveAt);
+            const pin = f.pinned ? '📌 ' : '';
+            lines.push(
+              `${i + 1}. ${pin}${f.name} — id=${f.userId}${ago ? ` · ${ago}` : ''}`,
+            );
           }
         }
       }
 
       if (wantGroup) {
         if (lines.length) lines.push('');
-        let groups: Array<{ groupId: string; name: string | null }> = [];
+        type GroupRow = {
+          groupId: string;
+          name: string | null;
+          lastActiveAt?: number;
+          pinned?: boolean;
+        };
+        let groupRows: GroupRow[] = [];
         if (sessionManager.isRunning(tenant.id)) {
           try {
             const live = await sessionManager.refreshGroups(tenant.id);
-            groups = live.map((g) => ({ groupId: g.groupId, name: g.name }));
+            groupRows = live.map((g) => ({
+              groupId: g.groupId,
+              name: g.name,
+              lastActiveAt: g.lastActiveAt,
+              pinned: g.pinned,
+            }));
           } catch {
-            groups = listGroupCache(tenant.id);
+            groupRows = listGroupCache(tenant.id).map((g) => ({
+              groupId: g.groupId,
+              name: g.name,
+              lastActiveAt: g.lastSeenAt > 0 ? g.lastSeenAt : undefined,
+            }));
           }
         } else {
-          groups = listGroupCache(tenant.id);
+          groupRows = listGroupCache(tenant.id).map((g) => ({
+            groupId: g.groupId,
+            name: g.name,
+            lastActiveAt: g.lastSeenAt > 0 ? g.lastSeenAt : undefined,
+          }));
         }
-        if (groups.length === 0) {
+        if (groupRows.length === 0) {
           lines.push('Group: (trống — nick đã vào group chưa?)');
         } else {
-          lines.push('Group (ghim → tin gần đây):');
-          for (let i = 0; i < groups.length; i++) {
-            const g = groups[i]!;
-            lines.push(`${i + 1}. ${g.name ?? '?'} — id=${g.groupId}`);
+          lines.push('Group (theo thời gian tin):');
+          for (let i = 0; i < groupRows.length; i++) {
+            const g = groupRows[i]!;
+            const ago = formatRelativeTime(g.lastActiveAt);
+            const pin = g.pinned ? '📌 ' : '';
+            lines.push(
+              `${i + 1}. ${pin}${g.name ?? '?'} — id=${g.groupId}${ago ? ` · ${ago}` : ''}`,
+            );
           }
         }
       }

@@ -82,7 +82,7 @@ export function insertTelegramTopic(input: {
       input.sourceGroupId,
       input.telegramChatId,
       input.topicTitle ?? null,
-      input.inboundOnly ? 1 : 0,
+      (input.inboundOnly ?? true) ? 1 : 0,
     );
   return findTopicById(input.telegramTopicId)!;
 }

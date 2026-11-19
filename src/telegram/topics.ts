@@ -68,7 +68,7 @@ export async function ensureTelegramTopicForSource(input: {
       sourceGroupId: input.sourceGroupId,
       telegramChatId: chatId,
       topicTitle: title,
-      inboundOnly: input.inboundOnly ?? false,
+      inboundOnly: input.inboundOnly ?? true,
     });
     logger.info(
       {

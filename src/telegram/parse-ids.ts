@@ -54,6 +54,14 @@ export const INBOUND_ONLY_TOKENS = new Set([
   'inbound-only',
 ]);
 
+/** Opt-in reply topic → Zalo (mặc định readonly). */
+export const TWOWAY_TOKENS = new Set([
+  'twoway',
+  'readwrite',
+  'rw',
+  '2way',
+]);
+
 /** Tách tin Telegram dài theo ~3900 ký tự. */
 export async function replyChunks(
   reply: (text: string) => Promise<unknown>,

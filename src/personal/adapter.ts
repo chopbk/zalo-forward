@@ -12,10 +12,18 @@ import {
 import type { ForwardMention, ForwardStyle } from '../relay/styles.js';
 import { downloadZaloMedia, safeUnlink, writeTempImage } from './media.js';
 
-const GROUP_HISTORY_PROBE_LIMIT = 20;
-const GROUP_HISTORY_PROBE_CONCURRENCY = 4;
-/** Endpoint /api/group/history hay 404 trên nhiều tài khoản — bỏ probe sau vài lỗi liên tiếp. */
+const GROUP_HISTORY_PROBE_LIMIT = 120;
+const GROUP_HISTORY_PROBE_CONCURRENCY = 6;
+/** Fallback /api/group/history hay 404 — abort sớm nếu không có getCloudMessage. */
 const GROUP_HISTORY_PROBE_FAIL_ABORT = 3;
+
+type ApiWithCloud = API & {
+  getCloudMessage?: (
+    groupId: string,
+    lastMsgId?: string,
+    options?: { isOld?: boolean | number },
+  ) => Promise<{ groupMsgs?: Array<{ data?: { ts?: string | number }; ts?: string | number }> }>;
+};
 
 function normalizeZaloTs(raw: number | undefined): number | undefined {
   if (raw == null || !Number.isFinite(raw) || raw <= 0) return undefined;
@@ -34,25 +42,61 @@ function isNotFoundError(err: unknown): boolean {
   return message.includes('404') || message.includes('Not Found');
 }
 
+function bestMsgTs(
+  msgs: Array<{ data?: { ts?: string | number }; ts?: string | number }> | undefined,
+): number | undefined {
+  let best: number | undefined;
+  for (const msg of msgs ?? []) {
+    const raw = msg?.data?.ts ?? msg?.ts;
+    const ts = normalizeZaloTs(raw != null ? Number(raw) : undefined);
+    if (ts != null && (best == null || ts > best)) best = ts;
+  }
+  return best;
+}
+
 async function probeGroupLastMessageTs(
   api: API,
   groupId: string,
 ): Promise<{ ts?: number; notFound?: boolean }> {
+  const cloudApi = api as ApiWithCloud;
+  if (typeof cloudApi.getCloudMessage === 'function') {
+    try {
+      try {
+        if (typeof api.getGroupInfo === 'function') await api.getGroupInfo(groupId);
+      } catch {
+        // warm context — ignore
+      }
+      const page = await cloudApi.getCloudMessage(groupId);
+      return { ts: bestMsgTs(page.groupMsgs) };
+    } catch (err) {
+      logger.debug({ err, groupId }, 'getCloudMessage probe failed');
+    }
+  }
+
   if (typeof api.getGroupChatHistory !== 'function') return {};
   try {
     const hist = await api.getGroupChatHistory(groupId, 1);
-    let best: number | undefined;
-    for (const msg of hist.groupMsgs ?? []) {
-      const raw = msg?.data?.ts ?? msg?.ts;
-      const ts = normalizeZaloTs(raw != null ? Number(raw) : undefined);
-      if (ts != null && (best == null || ts > best)) best = ts;
-    }
-    return { ts: best };
+    return { ts: bestMsgTs(hist.groupMsgs) };
   } catch (err) {
     if (isNotFoundError(err)) return { notFound: true };
     logger.debug({ err, groupId }, 'getGroupChatHistory probe failed');
     return {};
   }
+}
+
+/** Hiển thị tương đối — chỉ để list đọc được. */
+export function formatRelativeTime(ts?: number): string {
+  if (!ts || !(ts > 0)) return '';
+  const diff = Date.now() - ts;
+  if (diff < 0) return '';
+  const m = Math.floor(diff / 60_000);
+  if (m < 1) return 'vừa xong';
+  if (m < 60) return `${m}p`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d`;
+  return new Date(ts).toLocaleDateString('vi-VN');
 }
 
 async function mapPool<T, R>(
@@ -237,7 +281,7 @@ export class PersonalAccountAdapter {
 
   /**
    * Chat 1-1 (bạn bè) — id = userId Zalo.
-   * Sắp xếp: ghim → unread/lastAction → tên.
+   * Sắp xếp theo thời gian tin gần nhất (unread / lastActionTime).
    */
   async listFriends(): Promise<
     Array<{ userId: string; name: string; lastActiveAt?: number; pinned?: boolean }>
@@ -277,11 +321,11 @@ export class PersonalAccountAdapter {
       const userId = String(f.userId);
       const name =
         (f.displayName || f.zaloName || f.username || userId).trim() || userId;
-      const lastAction = normalizeZaloTs(f.lastActionTime);
-      const lastActiveAt = Math.max(
-        unreadTs.get(userId) ?? 0,
-        lastAction ?? 0,
-      ) || undefined;
+      const lastAction = normalizeZaloTs(
+        f.lastActionTime != null ? Number(f.lastActionTime) : undefined,
+      );
+      const lastActiveAt =
+        Math.max(unreadTs.get(userId) ?? 0, lastAction ?? 0) || undefined;
       return {
         userId,
         name,
@@ -290,10 +334,8 @@ export class PersonalAccountAdapter {
       };
     });
 
+    // Thời gian giảm dần; không có ts xuống cuối; ghim chỉ đánh dấu, không ưu tiên.
     items.sort((a, b) => {
-      const ap = a.pinned ? 1 : 0;
-      const bp = b.pinned ? 1 : 0;
-      if (ap !== bp) return bp - ap;
       const at = a.lastActiveAt ?? 0;
       const bt = b.lastActiveAt ?? 0;
       if (bt !== at) return bt - at;
@@ -375,21 +417,26 @@ export class PersonalAccountAdapter {
       logger.warn({ err, tenantId: this.tenantId }, 'getPinConversations failed');
     }
 
-    const groups = ids.map((id) => ({
-      groupId: id,
-      name: map[id]?.name ?? id,
-      lastActiveAt: lastById.get(id) ?? cached.get(id),
-      pinned: pinned.has(id),
-    }));
+    const groups = ids.map((id) => {
+      const unreadOrCache = lastById.get(id) ?? cached.get(id);
+      return {
+        groupId: id,
+        name: map[id]?.name ?? id,
+        lastActiveAt: unreadOrCache && unreadOrCache > 0 ? unreadOrCache : undefined,
+        pinned: pinned.has(id),
+      };
+    });
 
-    // Chỉ probe group chưa có unread/cache. Endpoint history hay 404 → abort sớm.
+    // Probe group thiếu ts — ưu tiên getCloudMessage (zca-js ≥ 2.2).
+    const cloudApi = this.api as ApiWithCloud;
+    const canProbe =
+      typeof cloudApi.getCloudMessage === 'function' ||
+      typeof this.api.getGroupChatHistory === 'function';
+    const hasCloud = typeof cloudApi.getCloudMessage === 'function';
     const missing = groups.filter((g) => !(g.lastActiveAt && g.lastActiveAt > 0));
-    const toProbe = [
-      ...missing.filter((g) => g.pinned),
-      ...missing.filter((g) => !g.pinned),
-    ].slice(0, GROUP_HISTORY_PROBE_LIMIT);
+    const toProbe = missing.slice(0, GROUP_HISTORY_PROBE_LIMIT);
 
-    if (toProbe.length > 0 && typeof this.api.getGroupChatHistory === 'function') {
+    if (toProbe.length > 0 && canProbe) {
       let consecutiveNotFound = 0;
       let probedOk = 0;
       let aborted = false;
@@ -400,7 +447,8 @@ export class PersonalAccountAdapter {
         const result = await probeGroupLastMessageTs(this.api, g.groupId);
         if (result.notFound) {
           consecutiveNotFound += 1;
-          if (consecutiveNotFound >= GROUP_HISTORY_PROBE_FAIL_ABORT) {
+          // Chỉ abort sớm khi phải dựa vào getGroupChatHistory (hay 404).
+          if (!hasCloud && consecutiveNotFound >= GROUP_HISTORY_PROBE_FAIL_ABORT) {
             aborted = true;
           }
           return;
@@ -421,16 +469,14 @@ export class PersonalAccountAdapter {
         );
       } else if (probedOk > 0) {
         logger.info(
-          { tenantId: this.tenantId, probedOk, missing: missing.length },
+          { tenantId: this.tenantId, probedOk, missing: missing.length, hasCloud },
           'Probed group history for recent order',
         );
       }
     }
 
+    // Thời gian tin gần nhất giảm dần (không ưu tiên ghim).
     groups.sort((a, b) => {
-      const ap = a.pinned ? 1 : 0;
-      const bp = b.pinned ? 1 : 0;
-      if (ap !== bp) return bp - ap;
       const at = a.lastActiveAt ?? 0;
       const bt = b.lastActiveAt ?? 0;
       if (bt !== at) return bt - at;

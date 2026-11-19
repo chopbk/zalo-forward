@@ -14,6 +14,7 @@ import {
 } from '../db/telegram-topics.js';
 import { getSession } from '../db/tenants.js';
 import { deleteRule, getRule, listRules } from '../db/rules.js';
+import { formatRelativeTime } from '../personal/adapter.js';
 import { sessionManager } from '../personal/manager.js';
 import { getTelegramBot, verifyTelegramForum } from './client.js';
 import { forwardTopicReplyToZalo } from './outbound.js';
@@ -23,6 +24,7 @@ import { telegramDestKey } from './dest.js';
 import { getDb } from '../db/client.js';
 import {
   INBOUND_ONLY_TOKENS,
+  TWOWAY_TOKENS,
   parseCommaIds,
   replyChunks,
   takeLeadingIds,
@@ -99,12 +101,12 @@ function wireHandlers(bot: Bot): void {
     '/help /tghelp — trợ giúp',
     '/config — kiểm tra bot + forum + session Zalo',
     '/users /list — danh sách map Zalo → topic',
-    '/useradd <id> [group|user] [readonly] [tên]',
-    '/useradd <id1>,<id2>,<id3> [group] [readonly] — thêm nhiều id',
+    '/useradd <id> [group|user] [twoway] [tên] — mặc định readonly',
+    '/useradd <id1>,<id2>,<id3> [group] — thêm nhiều id (readonly)',
     '/userdel <id|topic> · /userdel <id1>,<id2> — xóa map',
     '/tginfo — chi tiết topic hiện tại',
     '/recreate — tạo lại topic bị xóa',
-    '/readonly | /twoway — một chiều / hai chiều',
+    '/readonly | /twoway — đổi một chiều / hai chiều',
     '/zalochats [user|group] — chat Zalo gần đây',
     '/zalogroups · /zalofriends — chỉ group / chỉ 1-1',
     '',
@@ -196,10 +198,10 @@ function wireHandlers(bot: Bot): void {
       await ctx.reply(
         [
           'Dùng (giống tg-zalo):',
-          '/useradd <zalo_id> [group|user] [readonly] [tên]',
-          '/useradd <id1>,<id2>,<id3> [group|user] [readonly]',
+          '/useradd <zalo_id> [group|user] [twoway] [tên]',
+          '/useradd <id1>,<id2>,<id3> [group|user]',
           'Nhiều id cách nhau dấu phẩy.',
-          'readonly|ro|1way = chỉ Zalo→Telegram.',
+          'Mặc định readonly (chỉ Zalo→TG). Thêm twoway để reply ngược.',
           'Không ghi tên → bot thử lấy từ /zalochats cache.',
           'Lưu ý: forward live hiện hỗ trợ nguồn **group** tốt nhất.',
         ].join('\n'),
@@ -208,12 +210,16 @@ function wireHandlers(bot: Bot): void {
     }
 
     let forceKind: 'user' | 'group' | undefined;
-    let inboundOnly = false;
+    let inboundOnly = true;
     const nameParts: string[] = [];
     for (const token of rest) {
       const lower = token.toLowerCase();
       if (lower === 'group' || lower === 'user') {
         forceKind = lower;
+        continue;
+      }
+      if (TWOWAY_TOKENS.has(lower)) {
+        inboundOnly = false;
         continue;
       }
       if (INBOUND_ONLY_TOKENS.has(lower)) {
@@ -490,22 +496,30 @@ function wireHandlers(bot: Bot): void {
       const lines: string[] = [];
       if (!focusGroupsOnly) {
         const friends = await sessionManager.refreshFriends(forum.cfg.tenantId);
-        lines.push('Chat 1-1:');
+        lines.push('Chat 1-1 (theo thời gian tin):');
         if (friends.length === 0) lines.push('(trống)');
         else {
           for (const f of friends.slice(0, 40)) {
-            lines.push(`${f.name} — \`${f.userId}\``);
+            const ago = formatRelativeTime(f.lastActiveAt);
+            const pin = f.pinned ? '📌 ' : '';
+            lines.push(
+              `${pin}${f.name} — \`${f.userId}\`${ago ? ` · ${ago}` : ''}`,
+            );
           }
         }
       }
       if (!focusFriends) {
         const groups = await sessionManager.refreshGroups(forum.cfg.tenantId);
         if (lines.length) lines.push('');
-        lines.push('Group:');
+        lines.push('Group (theo thời gian tin):');
         if (groups.length === 0) lines.push('(trống)');
         else {
           for (const g of groups.slice(0, 40)) {
-            lines.push(`${g.name} — \`${g.groupId}\``);
+            const ago = formatRelativeTime(g.lastActiveAt);
+            const pin = g.pinned ? '📌 ' : '';
+            lines.push(
+              `${pin}${g.name} — \`${g.groupId}\`${ago ? ` · ${ago}` : ''}`,
+            );
           }
         }
       }

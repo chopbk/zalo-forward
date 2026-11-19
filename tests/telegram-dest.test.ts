@@ -29,23 +29,30 @@ describe('parseAddTgCommand', () => {
       sourceGroupId: '111',
       filterMode: 'all',
       keywords: [],
+      inboundOnly: true,
+    });
+  });
+
+  it('parses twoway opt-in', () => {
+    expect(parseAddTgCommand('/addtg 111 all twoway')).toMatchObject({
+      sourceGroupId: '111',
       inboundOnly: false,
     });
   });
 
-  it('parses readonly', () => {
+  it('parses readonly explicitly', () => {
     expect(parseAddTgCommand('/addtg 111 all readonly')).toMatchObject({
       sourceGroupId: '111',
       inboundOnly: true,
     });
   });
 
-  it('parses keywords', () => {
+  it('parses keywords (default readonly)', () => {
     expect(parseAddTgCommand('/addtg 111 keywords sale,hot')).toEqual({
       sourceGroupId: '111',
       filterMode: 'keywords',
       keywords: ['sale', 'hot'],
-      inboundOnly: false,
+      inboundOnly: true,
     });
   });
 });

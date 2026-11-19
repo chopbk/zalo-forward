@@ -97,7 +97,7 @@ Sau đó tin trong group nguồn (đúng luật) sẽ được chuyển sang đ�
 /tgadmins <id1,id2>         # ai được lệnh / reply trong forum
 /tgstatus
 /addtg <id_nguồn> all
-/addtg <id_nguồn> all readonly
+/addtg <id_nguồn> all twoway
 ```
 
 1. Add bot Telegram vào forum (bật Topics, quyền Manage topics)

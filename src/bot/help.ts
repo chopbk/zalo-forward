@@ -17,7 +17,7 @@ Setup:
 
 /addtg (cần đã /tgbind):
 /addtg <id_nguồn> all
-/addtg <id_nguồn> all readonly
+/addtg <id_nguồn> all          (mặc định readonly; thêm twoway nếu cần)
 
 Chi tiết: /help addrule · /help addtg
 

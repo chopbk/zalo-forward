@@ -152,7 +152,14 @@ export class SessionManager {
 
   async refreshGroups(
     tenantId: number,
-  ): Promise<Array<{ groupId: string; name: string; lastActiveAt?: number }>> {
+  ): Promise<
+    Array<{
+      groupId: string;
+      name: string;
+      lastActiveAt?: number;
+      pinned?: boolean;
+    }>
+  > {
     const adapter = this.getAdapter(tenantId);
     if (!adapter) throw new Error('Session chưa chạy — /login rồi /resume');
     const groups = await adapter.listGroups();
@@ -169,7 +176,14 @@ export class SessionManager {
 
   async refreshFriends(
     tenantId: number,
-  ): Promise<Array<{ userId: string; name: string; lastActiveAt?: number }>> {
+  ): Promise<
+    Array<{
+      userId: string;
+      name: string;
+      lastActiveAt?: number;
+      pinned?: boolean;
+    }>
+  > {
     const adapter = this.getAdapter(tenantId);
     if (!adapter) throw new Error('Session chưa chạy — /login rồi /resume');
     return adapter.listFriends();
