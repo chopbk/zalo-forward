@@ -579,6 +579,32 @@ export class PersonalAccountAdapter {
     });
   }
 
+  /** Serialize WS old_messages requests (1-1 history). */
+  private userHistoryTail: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Lịch sử thread (group qua Cloud; 1-1 qua WS requestOldMessages).
+   */
+  async fetchThreadHistory(
+    threadId: string,
+    threadKind: 'user' | 'group',
+    count = 50,
+  ): Promise<{
+    messages: NormalizedGroupMessage[];
+    meta: {
+      pages: number;
+      rawCount: number;
+      isFiltered: boolean;
+      lastMsgId?: string;
+      source: 'cloud' | 'ws_old' | 'empty';
+    };
+  }> {
+    if (threadKind === 'user') {
+      return this.fetchUserHistory(threadId, count);
+    }
+    return this.fetchGroupHistory(threadId, count);
+  }
+
   /**
    * Lịch sử group (cũ → mới) qua getCloudMessage / getGroupChatHistory.
    */
@@ -592,7 +618,7 @@ export class PersonalAccountAdapter {
       rawCount: number;
       isFiltered: boolean;
       lastMsgId?: string;
-      source: 'cloud' | 'empty';
+      source: 'cloud' | 'ws_old' | 'empty';
     };
   }> {
     const want = Math.max(1, Math.min(count, 200));
@@ -641,6 +667,203 @@ export class PersonalAccountAdapter {
         source,
       },
     };
+  }
+
+  /**
+   * Lịch sử 1-1 qua WS `requestOldMessages` (zca-js không có cloud history user).
+   * Giới hạn thực tế ~2 tuần tin gần đây trên session.
+   */
+  async fetchUserHistory(
+    userId: string,
+    count = 50,
+  ): Promise<{
+    messages: NormalizedGroupMessage[];
+    meta: {
+      pages: number;
+      rawCount: number;
+      isFiltered: boolean;
+      lastMsgId?: string;
+      source: 'cloud' | 'ws_old' | 'empty';
+    };
+  }> {
+    const want = Math.max(1, Math.min(count, 200));
+    const run = () => this.fetchUserHistoryViaWs(userId, want);
+    const prev = this.userHistoryTail;
+    let release!: () => void;
+    this.userHistoryTail = new Promise<void>((r) => {
+      release = r;
+    });
+    await prev.catch(() => undefined);
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  }
+
+  private fetchUserHistoryViaWs(
+    userId: string,
+    want: number,
+  ): Promise<{
+    messages: NormalizedGroupMessage[];
+    meta: {
+      pages: number;
+      rawCount: number;
+      isFiltered: boolean;
+      lastMsgId?: string;
+      source: 'cloud' | 'ws_old' | 'empty';
+    };
+  }> {
+    const listener = this.api.listener as typeof this.api.listener & {
+      on(
+        event: 'old_messages',
+        cb: (messages: ZaloListenerMessage[], type: ThreadType) => void,
+      ): void;
+      off?(
+        event: 'old_messages',
+        cb: (messages: ZaloListenerMessage[], type: ThreadType) => void,
+      ): void;
+      removeListener?(
+        event: 'old_messages',
+        cb: (messages: ZaloListenerMessage[], type: ThreadType) => void,
+      ): void;
+      requestOldMessages?(
+        threadType: ThreadType,
+        lastMsgId?: string | null,
+      ): void;
+    };
+
+    const requestOld = listener.requestOldMessages?.bind(listener);
+    if (typeof requestOld !== 'function') {
+      return Promise.reject(
+        new Error('Listener không hỗ trợ requestOldMessages (cần zca-js mới)'),
+      );
+    }
+
+    return new Promise((resolve, reject) => {
+      const collected: ZaloListenerMessage[] = [];
+      const seen = new Set<string>();
+      let pages = 0;
+      let cursor: string | null = null;
+      let settled = false;
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const cleanup = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        const off = listener.off ?? listener.removeListener;
+        if (typeof off === 'function') {
+          off.call(listener, 'old_messages', onOld);
+        }
+      };
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+
+        collected.sort((a, b) => {
+          const ta =
+            normalizeZaloTs(
+              a.data?.ts != null ? Number(a.data.ts) : undefined,
+            ) ?? 0;
+          const tb =
+            normalizeZaloTs(
+              b.data?.ts != null ? Number(b.data.ts) : undefined,
+            ) ?? 0;
+          return ta - tb;
+        });
+
+        const out: NormalizedGroupMessage[] = [];
+        for (const raw of collected) {
+          const normalized = parseGroupMessage(raw, 'user');
+          if (normalized) out.push(normalized);
+        }
+        const sliced = out.slice(-want);
+
+        logger.info(
+          {
+            tenantId: this.tenantId,
+            userId,
+            requested: want,
+            got: sliced.length,
+            pages,
+            source: sliced.length ? 'ws_old' : 'empty',
+          },
+          'Fetched Zalo 1-1 chat history',
+        );
+
+        resolve({
+          messages: sliced,
+          meta: {
+            pages,
+            rawCount: collected.length,
+            isFiltered: false,
+            lastMsgId: cursor ?? undefined,
+            source: sliced.length ? 'ws_old' : 'empty',
+          },
+        });
+      };
+
+      const armIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => finish(), 4_000);
+      };
+
+      const onOld = (msgs: ZaloListenerMessage[], type: ThreadType) => {
+        if (settled) return;
+        if (type !== ThreadType.User && Number(type) !== ThreadType.User) {
+          return;
+        }
+        pages += 1;
+        armIdle();
+
+        for (const m of msgs) {
+          if (String(m.threadId) !== String(userId)) continue;
+          const id = m.data?.msgId != null ? String(m.data.msgId) : '';
+          if (id) {
+            if (seen.has(id)) continue;
+            seen.add(id);
+          }
+          collected.push(m);
+        }
+
+        const last = msgs[msgs.length - 1];
+        const nextCursor =
+          last?.data?.msgId != null ? String(last.data.msgId) : null;
+
+        if (collected.length >= want || msgs.length === 0 || pages >= 15) {
+          finish();
+          return;
+        }
+        if (!nextCursor || nextCursor === cursor) {
+          finish();
+          return;
+        }
+        cursor = nextCursor;
+        try {
+          requestOld(ThreadType.User, cursor);
+        } catch (err) {
+          settled = true;
+          cleanup();
+          reject(err);
+        }
+      };
+
+      listener.on('old_messages', onOld);
+      armIdle();
+      try {
+        requestOld(ThreadType.User, null);
+      } catch (err) {
+        settled = true;
+        cleanup();
+        reject(err);
+      }
+
+      // Hard timeout
+      setTimeout(() => {
+        if (!settled) finish();
+      }, 20_000);
+    });
   }
 
   async undoMessage(params: {

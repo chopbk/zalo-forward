@@ -39,8 +39,8 @@ import {
 } from './parse-ids.js';
 import type { TelegramTopic } from '../db/telegram-topics.js';
 import {
-  backfillGroupHistory,
-  GROUP_HISTORY_DEFAULT_LIMIT,
+  backfillTopicHistory,
+  HISTORY_DEFAULT_LIMIT,
 } from './history.js';
 import {
   syncTelegramDeleteToZalo,
@@ -124,7 +124,7 @@ function wireHandlers(bot: Bot): void {
     '/userdel <id|topic> · /userdel <id1>,<id2> — xóa map',
     '/tginfo — chi tiết topic hiện tại',
     '/recreate — tạo lại topic bị xóa',
-    '/history — nạp lịch sử group vào topic',
+    '/history — nạp lịch sử (group hoặc 1-1) vào topic',
     '/del — reply tin → xoá TG + thu hồi Zalo',
     '/readonly | /twoway — đổi một chiều / hai chiều',
     '/zalochats [user|group] — chat Zalo gần đây',
@@ -321,19 +321,19 @@ function wireHandlers(bot: Bot): void {
           `${created ? '+' : '~'} [${kind}]${modeTag} ${displayName ?? '—'} id=${zaloId} → ${tgDest ?? '?'} rule=#${rule.id}`,
         );
 
-        // Auto-backfill lịch sử cho group mới map
-        if (kind === 'group' && tgDest && sessionManager.isRunning(forum.cfg.tenantId)) {
+        // Auto-backfill lịch sử (group + 1-1)
+        if (tgDest && sessionManager.isRunning(forum.cfg.tenantId)) {
           const topicId = parseTelegramDest(tgDest);
           const topic = topicId != null ? findTopicById(topicId) : null;
           const adapter = sessionManager.getAdapter(forum.cfg.tenantId);
           const api = getTelegramApi();
           if (topic && adapter && api) {
             try {
-              const hist = await backfillGroupHistory(
+              const hist = await backfillTopicHistory(
                 api,
                 adapter,
                 topic,
-                GROUP_HISTORY_DEFAULT_LIMIT,
+                HISTORY_DEFAULT_LIMIT,
               );
               lines.push(
                 `  ↳ history +${hist.loaded}` +
@@ -662,10 +662,6 @@ function wireHandlers(bot: Bot): void {
       await ctx.reply('Topic chưa map.');
       return;
     }
-    if (topic.threadKind !== 'group') {
-      await ctx.reply('Chỉ nạp lịch sử cho topic group.');
-      return;
-    }
     if (!sessionManager.isRunning(forum.cfg.tenantId)) {
       await ctx.reply('Session Zalo chưa chạy.');
       return;
@@ -676,15 +672,16 @@ function wireHandlers(bot: Bot): void {
       await ctx.reply('Adapter/API chưa sẵn sàng.');
       return;
     }
+    const kindLabel = topic.threadKind === 'user' ? 'chat 1-1' : 'group';
     await ctx.reply(
-      `📜 Đang nạp ${GROUP_HISTORY_DEFAULT_LIMIT} tin gần nhất của group ${topic.sourceGroupId}…`,
+      `📜 Đang nạp ${HISTORY_DEFAULT_LIMIT} tin gần nhất (${kindLabel}) ${topic.sourceGroupId}…`,
     );
     try {
-      const hist = await backfillGroupHistory(
+      const hist = await backfillTopicHistory(
         api,
         adapter,
         topic,
-        GROUP_HISTORY_DEFAULT_LIMIT,
+        HISTORY_DEFAULT_LIMIT,
       );
       if (hist.emptyHint) {
         await ctx.reply(`⚠️ ${hist.emptyHint}`);
