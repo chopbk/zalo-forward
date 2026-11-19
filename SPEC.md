@@ -32,13 +32,14 @@ Không còn 1 `TELEGRAM_FORUM_GROUP_ID` dùng chung mọi user.
 
 ## Phạm vi MVP
 
-| Có | Không |
-|----|--------|
+| Có | Không (gap vs tg-zalo) |
+|----|------------------------|
 | Per-tenant forum | Multi-forum / tenant |
-| Tạo topic + forward text/ảnh/link | Channel broadcast (luồng C tg-zalo) |
-| Reply topic → Zalo (twoway) | Đăng ký khách 1-1 |
-| Lệnh TG: help, config, users, useradd, userdel, tginfo, recreate, readonly/twoway, zalochats, id | Full CRUD useredit / mute / broadcast |
-| Filter all/keywords như luật Zalo | Video/file/voice |
+| Tạo topic + forward text/ảnh/link | Channel broadcast + signature |
+| Reply topic → Zalo (twoway) | message_links / edit+delete sync / history backfill |
+| `/useradd` batch `id1,id2` + group\|user\|readonly | `/search`, `/useredit`, CRM mute/block |
+| zalochats / zalogroups / zalofriends | Forward 1-1 first-class (map user được; listener ưu tiên group) |
+| Filter all/keywords (Zalo `/addtg`) | Video/file/voice |
 
 ## Lệnh
 
@@ -50,8 +51,8 @@ Không còn 1 `TELEGRAM_FORUM_GROUP_ID` dùng chung mọi user.
 
 ### Telegram (trong forum đã bind, user ∈ tgadmins ∪ TELEGRAM_ADMIN_IDS)
 
-- `/help` `/config` `/users` `/useradd` `/userdel` `/tginfo` `/recreate`
-- `/readonly` `/twoway` `/zalochats` `/id`
+- `/help` `/config` `/users` `/useradd` (batch) `/userdel` (batch) `/tginfo` `/recreate`
+- `/readonly` `/twoway` `/zalochats` `/zalogroups` `/zalofriends` `/id`
 - Reply text/ảnh trong topic → Zalo group (nếu không readonly)
 
 ## Schema

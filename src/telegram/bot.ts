@@ -21,6 +21,13 @@ import { recreateTopicById } from './topics.js';
 import { upsertRuleWithTelegram } from './resolve-targets.js';
 import { telegramDestKey } from './dest.js';
 import { getDb } from '../db/client.js';
+import {
+  INBOUND_ONLY_TOKENS,
+  parseCommaIds,
+  replyChunks,
+  takeLeadingIds,
+} from './parse-ids.js';
+import type { TelegramTopic } from '../db/telegram-topics.js';
 
 let started = false;
 const pendingAlbums = new Map<
@@ -91,10 +98,10 @@ function wireHandlers(bot: Bot): void {
     '',
     '/help /tghelp — trợ giúp',
     '/config — kiểm tra bot + forum + session Zalo',
-    '/users /list — danh sách map Zalo group → topic',
-    '/useradd <zalo_group_id> [tên] — tạo topic + luật forward',
-    '/useradd <id> readonly — chỉ Zalo→TG',
-    '/userdel — xóa map (trong topic hoặc /userdel <topicId|groupId>)',
+    '/users /list — danh sách map Zalo → topic',
+    '/useradd <id> [group|user] [readonly] [tên]',
+    '/useradd <id1>,<id2>,<id3> [group] [readonly] — thêm nhiều id',
+    '/userdel <id|topic> · /userdel <id1>,<id2> — xóa map',
     '/tginfo — chi tiết topic hiện tại',
     '/recreate — tạo lại topic bị xóa',
     '/readonly | /twoway — một chiều / hai chiều',
@@ -183,33 +190,40 @@ function wireHandlers(bot: Bot): void {
     const forum = requireForumAdmin(ctx);
     if (!forum) return;
     const raw = (ctx.message?.text ?? '').replace(/^\/\S+\s*/, '').trim();
-    if (!raw) {
+    const parts = raw.split(/\s+/).filter(Boolean);
+    const { ids, rest } = takeLeadingIds(parts);
+    if (ids.length === 0) {
       await ctx.reply(
-        'Format:\n/useradd <zalo_group_id> [readonly] [tên]\nVí dụ: /useradd 9045111\n/useradd 9045111 readonly Signal A',
+        [
+          'Dùng (giống tg-zalo):',
+          '/useradd <zalo_id> [group|user] [readonly] [tên]',
+          '/useradd <id1>,<id2>,<id3> [group|user] [readonly]',
+          'Nhiều id cách nhau dấu phẩy.',
+          'readonly|ro|1way = chỉ Zalo→Telegram.',
+          'Không ghi tên → bot thử lấy từ /zalochats cache.',
+          'Lưu ý: forward live hiện hỗ trợ nguồn **group** tốt nhất.',
+        ].join('\n'),
       );
       return;
     }
-    const parts = raw.split(/\s+/);
+
+    let forceKind: 'user' | 'group' | undefined;
     let inboundOnly = false;
-    const ids: string[] = [];
     const nameParts: string[] = [];
-    for (const p of parts) {
-      if (/^(readonly|oneway|ro|1way)$/i.test(p)) {
+    for (const token of rest) {
+      const lower = token.toLowerCase();
+      if (lower === 'group' || lower === 'user') {
+        forceKind = lower;
+        continue;
+      }
+      if (INBOUND_ONLY_TOKENS.has(lower)) {
         inboundOnly = true;
         continue;
       }
-      if (/^\d+$/.test(p) && ids.length === 0) {
-        ids.push(p);
-        continue;
-      }
-      if (ids.length > 0) nameParts.push(p);
-      else ids.push(p);
+      nameParts.push(token);
     }
-    const sourceGroupId = ids[0];
-    if (!sourceGroupId) {
-      await ctx.reply('Thiếu zalo_group_id');
-      return;
-    }
+    const sharedName =
+      ids.length === 1 && nameParts.length ? nameParts.join(' ') : undefined;
 
     const session = getSession(forum.cfg.tenantId);
     if (session?.status !== 'active') {
@@ -217,78 +231,178 @@ function wireHandlers(bot: Bot): void {
       return;
     }
 
-    try {
-      if (nameParts.length && sessionManager.isRunning(forum.cfg.tenantId)) {
-        const { upsertGroupCache } = await import('../db/rules.js');
-        upsertGroupCache(forum.cfg.tenantId, sourceGroupId, nameParts.join(' '));
-      }
-      const { rule, created, tgDest } = await upsertRuleWithTelegram({
-        tenantId: forum.cfg.tenantId,
-        sourceGroupId,
-        zaloTargets: [],
-        wantsTelegram: true,
-        filterMode: 'all',
-        inboundOnly,
-        mergeExistingZalo: true,
-      });
+    if (ids.length > 1) {
       await ctx.reply(
-        `${created ? 'Đã tạo' : 'Đã cập nhật'} luật #${rule.id}\n` +
-          `Zalo ${sourceGroupId}\n→ ${tgDest ?? '?'}` +
-          (inboundOnly ? '\n(readonly)' : '\n(twoway — reply topic → Zalo)'),
+        `Đang thêm ${ids.length} id${inboundOnly ? ' (readonly)' : ''}…`,
       );
-    } catch (err) {
-      await ctx.reply(`Lỗi: ${err instanceof Error ? err.message : String(err)}`);
     }
+
+    // Prefetch tên để batch
+    let groupNameById = new Map<string, string>();
+    let friendNameById = new Map<string, string>();
+    if (sessionManager.isRunning(forum.cfg.tenantId)) {
+      try {
+        const groups = await sessionManager.refreshGroups(forum.cfg.tenantId);
+        groupNameById = new Map(groups.map((g) => [g.groupId, g.name]));
+      } catch {
+        // ignore
+      }
+      try {
+        const friends = await sessionManager.refreshFriends(forum.cfg.tenantId);
+        friendNameById = new Map(friends.map((f) => [f.userId, f.name]));
+      } catch {
+        // ignore
+      }
+    }
+
+    const lines: string[] = [];
+    let ok = 0;
+    let fail = 0;
+    for (const zaloId of ids) {
+      try {
+        const kind =
+          forceKind ??
+          (groupNameById.has(zaloId)
+            ? 'group'
+            : friendNameById.has(zaloId)
+              ? 'user'
+              : 'group');
+        const displayName =
+          sharedName ||
+          (kind === 'group'
+            ? groupNameById.get(zaloId)
+            : friendNameById.get(zaloId));
+
+        if (displayName) {
+          const { upsertGroupCache } = await import('../db/rules.js');
+          upsertGroupCache(forum.cfg.tenantId, zaloId, displayName);
+        }
+
+        const { rule, created, tgDest } = await upsertRuleWithTelegram({
+          tenantId: forum.cfg.tenantId,
+          sourceGroupId: zaloId,
+          zaloTargets: [],
+          wantsTelegram: true,
+          filterMode: 'all',
+          inboundOnly,
+          mergeExistingZalo: true,
+        });
+        ok += 1;
+        const modeTag = inboundOnly ? ' readonly' : '';
+        lines.push(
+          `${created ? '+' : '~'} [${kind}]${modeTag} ${displayName ?? '—'} id=${zaloId} → ${tgDest ?? '?'} rule=#${rule.id}`,
+        );
+        if (kind === 'user') {
+          lines.push(
+            `  ↳ lưu ý: listener hiện forward group; map user đã tạo topic sẵn`,
+          );
+        }
+      } catch (err) {
+        fail += 1;
+        logger.error({ err, zaloId }, 'useradd failed');
+        lines.push(
+          `✗ ${zaloId} — ${err instanceof Error ? err.message : 'lỗi'}`,
+        );
+      }
+    }
+
+    await replyChunks(
+      (t) => ctx.reply(t),
+      [`✅ useradd xong: ok=${ok} fail=${fail}`, ...lines].join('\n'),
+    );
   });
 
   bot.command(['userdel', 'user_del'], async (ctx) => {
     const forum = requireForumAdmin(ctx);
     if (!forum) return;
     const raw = (ctx.message?.text ?? '').replace(/^\/\S+\s*/, '').trim();
-    let topic = ctx.message?.message_thread_id
+    const topicFromCtx = ctx.message?.message_thread_id
       ? findTopicById(ctx.message.message_thread_id)
       : null;
-    if (raw) {
-      const asNum = Number(raw);
-      if (Number.isFinite(asNum) && asNum > 0) {
-        topic = findTopicById(asNum) ?? topic;
-      }
-      if (!topic) {
-        const all = listTopicsByTenant(forum.cfg.tenantId);
-        topic = all.find((t) => t.sourceGroupId === raw) ?? null;
+
+    const targets: Array<{ ref: string; topic: TelegramTopic | null }> = [];
+
+    if (!raw && topicFromCtx && topicFromCtx.tenantId === forum.cfg.tenantId) {
+      targets.push({
+        ref: String(topicFromCtx.telegramTopicId),
+        topic: topicFromCtx,
+      });
+    } else if (raw) {
+      const { ids } = takeLeadingIds(raw.split(/\s+/).filter(Boolean));
+      const refs = ids.length > 0 ? ids : parseCommaIds(raw);
+      const all = listTopicsByTenant(forum.cfg.tenantId);
+      for (const ref of refs) {
+        const asNum = Number(ref);
+        let topic =
+          Number.isFinite(asNum) && asNum > 0 ? findTopicById(asNum) : null;
+        if (!topic || topic.tenantId !== forum.cfg.tenantId) {
+          topic = all.find((t) => t.sourceGroupId === ref) ?? null;
+        }
+        if (topic && topic.tenantId !== forum.cfg.tenantId) topic = null;
+        targets.push({ ref, topic });
       }
     }
-    if (!topic || topic.tenantId !== forum.cfg.tenantId) {
-      await ctx.reply('Không tìm thấy map. Chạy trong topic hoặc /userdel <topicId|groupId>');
+
+    if (targets.length === 0) {
+      await ctx.reply(
+        'Chạy trong topic hoặc:\n/userdel <topicId|zaloId>\n/userdel <id1>,<id2>',
+      );
       return;
     }
-    try {
-      if (topic.ruleId != null) {
-        const rule = getRule(topic.ruleId);
-        if (rule) {
-          const rest = rule.targets.filter(
-            (t) => t !== telegramDestKey(topic!.telegramTopicId),
-          );
-          if (rest.length === 0) {
-            deleteRule(topic.ruleId);
-          } else {
-            getDb()
-              .prepare(`DELETE FROM rule_targets WHERE rule_id = ? AND dest_group_id = ?`)
-              .run(topic.ruleId, telegramDestKey(topic.telegramTopicId));
+
+    if (targets.length > 1) {
+      await ctx.reply(`Đang xóa ${targets.length} map…`);
+    }
+
+    const lines: string[] = [];
+    let ok = 0;
+    let fail = 0;
+    for (const { ref, topic } of targets) {
+      if (!topic || topic.tenantId !== forum.cfg.tenantId) {
+        fail += 1;
+        lines.push(`✗ ${ref} — không tìm thấy`);
+        continue;
+      }
+      try {
+        if (topic.ruleId != null) {
+          const rule = getRule(topic.ruleId);
+          if (rule) {
+            const rest = rule.targets.filter(
+              (t) => t !== telegramDestKey(topic.telegramTopicId),
+            );
+            if (rest.length === 0) {
+              deleteRule(topic.ruleId);
+            } else {
+              getDb()
+                .prepare(
+                  `DELETE FROM rule_targets WHERE rule_id = ? AND dest_group_id = ?`,
+                )
+                .run(topic.ruleId, telegramDestKey(topic.telegramTopicId));
+            }
           }
         }
+        deleteTelegramTopic(topic.telegramTopicId);
+        try {
+          await bot.api.deleteForumTopic(forum.chatId, topic.telegramTopicId);
+        } catch {
+          // topic có thể đã xóa tay
+        }
+        ok += 1;
+        lines.push(
+          `✓ topic #${topic.telegramTopicId} ← ${topic.sourceGroupId}`,
+        );
+      } catch (err) {
+        fail += 1;
+        lines.push(
+          `✗ ${ref} — ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
-      deleteTelegramTopic(topic.telegramTopicId);
-      try {
-        const api = bot.api;
-        await api.deleteForumTopic(forum.chatId, topic.telegramTopicId);
-      } catch {
-        // topic có thể đã xóa tay
-      }
-      await ctx.reply(`Đã xóa map topic #${topic.telegramTopicId} ← ${topic.sourceGroupId}`);
-    } catch (err) {
-      await ctx.reply(`Lỗi: ${err instanceof Error ? err.message : String(err)}`);
     }
+
+    await replyChunks(
+      (t) => ctx.reply(t),
+      [`✅ userdel: ok=${ok} fail=${fail}`, ...lines].join('\n'),
+    );
   });
 
   bot.command(['tginfo', 'user'], async (ctx) => {
