@@ -41,7 +41,7 @@ export type ForwardRuleRow = {
 
 let db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 export function getDb(): Database.Database {
   if (db) return db;
@@ -381,6 +381,32 @@ function migrate(database: Database.Database): void {
         ON message_links(tenant_id, telegram_chat_id, telegram_message_id);
       CREATE INDEX IF NOT EXISTS idx_message_links_topic
         ON message_links(telegram_topic_id);
+    `);
+    database
+      .prepare(
+        `INSERT INTO schema_meta(key, value) VALUES('version', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run('8');
+    logger.info({ version: 8 }, 'DB migrated');
+  }
+
+  const after8 = database
+    .prepare(`SELECT value FROM schema_meta WHERE key = 'version'`)
+    .get() as { value: string } | undefined;
+  const ver8 = after8 ? Number(after8.value) : 0;
+
+  if (ver8 < 9) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS friends_cache (
+        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL,
+        name TEXT,
+        last_seen_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (tenant_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_friends_cache_recent
+        ON friends_cache(tenant_id, last_seen_at DESC);
     `);
     database
       .prepare(

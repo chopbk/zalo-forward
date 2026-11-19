@@ -1,5 +1,9 @@
 import logger from '../config/logger.js';
-import { listEnabledRulesForSource, touchGroupActivity } from '../db/rules.js';
+import {
+  listEnabledRulesForSource,
+  touchFriendActivity,
+  touchGroupActivity,
+} from '../db/rules.js';
 import { claimProcessedMessage } from '../db/processed.js';
 import {
   claimNextJob,
@@ -49,7 +53,11 @@ export async function handleGroupInbound(
     return;
   }
 
-  touchGroupActivity(tenant.id, msg.groupId, Date.now(), undefined);
+  if (msg.threadKind === 'user') {
+    touchFriendActivity(tenant.id, msg.groupId, Date.now(), msg.senderName);
+  } else {
+    touchGroupActivity(tenant.id, msg.groupId, Date.now(), undefined);
+  }
 
   const rules = listEnabledRulesForSource(tenant.id, msg.groupId);
   if (rules.length === 0) {

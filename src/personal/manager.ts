@@ -6,7 +6,11 @@ import {
   upsertSession,
   type Tenant,
 } from '../db/tenants.js';
-import { setGroupLastSeen, upsertGroupCache } from '../db/rules.js';
+import {
+  setFriendLastSeen,
+  setGroupLastSeen,
+  upsertGroupCache,
+} from '../db/rules.js';
 import { deleteSessionFile } from './session.js';
 import { loginWithSession } from './session.js';
 import { PersonalAccountAdapter } from './adapter.js';
@@ -188,7 +192,15 @@ export class SessionManager {
   > {
     const adapter = this.getAdapter(tenantId);
     if (!adapter) throw new Error('Session chưa chạy — /login rồi /resume');
-    return adapter.listFriends();
+    const friends = await adapter.listFriends();
+    for (const f of friends) {
+      if (f.lastActiveAt && f.lastActiveAt > 0) {
+        setFriendLastSeen(tenantId, f.userId, f.name, f.lastActiveAt);
+      } else {
+        setFriendLastSeen(tenantId, f.userId, f.name, 0);
+      }
+    }
+    return friends;
   }
 }
 

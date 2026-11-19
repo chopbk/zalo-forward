@@ -444,3 +444,66 @@ export function getGroupName(tenantId: number, groupId: string): string | null {
     .get(tenantId, groupId) as { name: string | null } | undefined;
   return row?.name ?? null;
 }
+
+/** Cập nhật hoạt động chat 1-1 (tin inbound / unread / WS probe). */
+export function touchFriendActivity(
+  tenantId: number,
+  userId: string,
+  atMs: number = Date.now(),
+  name?: string | null,
+): void {
+  if (!userId || !(atMs > 0)) return;
+  getDb()
+    .prepare(
+      `INSERT INTO friends_cache (tenant_id, user_id, name, last_seen_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(tenant_id, user_id) DO UPDATE SET
+         name = COALESCE(excluded.name, friends_cache.name),
+         last_seen_at = MAX(friends_cache.last_seen_at, excluded.last_seen_at)`,
+    )
+    .run(tenantId, userId, name ?? null, Math.floor(atMs));
+}
+
+export function setFriendLastSeen(
+  tenantId: number,
+  userId: string,
+  name: string | null,
+  lastSeenAt: number,
+): void {
+  if (!userId) return;
+  if (!(lastSeenAt > 0)) {
+    getDb()
+      .prepare(
+        `INSERT INTO friends_cache (tenant_id, user_id, name, last_seen_at)
+         VALUES (?, ?, ?, 0)
+         ON CONFLICT(tenant_id, user_id) DO UPDATE SET
+           name = COALESCE(excluded.name, friends_cache.name)`,
+      )
+      .run(tenantId, userId, name);
+    return;
+  }
+  getDb()
+    .prepare(
+      `INSERT INTO friends_cache (tenant_id, user_id, name, last_seen_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(tenant_id, user_id) DO UPDATE SET
+         name = COALESCE(excluded.name, friends_cache.name),
+         last_seen_at = excluded.last_seen_at`,
+    )
+    .run(tenantId, userId, name, Math.floor(lastSeenAt));
+}
+
+/** Map userId → last_seen_at (ms) từ inbound / lần /zalochats trước. */
+export function getFriendActivityMap(tenantId: number): Map<string, number> {
+  const rows = getDb()
+    .prepare(
+      `SELECT user_id, last_seen_at FROM friends_cache
+       WHERE tenant_id = ? AND last_seen_at > 0`,
+    )
+    .all(tenantId) as Array<{ user_id: string; last_seen_at: number }>;
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    map.set(row.user_id, row.last_seen_at);
+  }
+  return map;
+}

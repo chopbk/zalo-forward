@@ -3,7 +3,12 @@ import { join } from 'node:path';
 import { ThreadType, type API, type ZaloListenerMessage } from 'zca-js';
 import { getEnv } from '../config/env.js';
 import logger from '../config/logger.js';
-import { getGroupActivityMap, listGroupCache } from '../db/rules.js';
+import {
+  getFriendActivityMap,
+  getGroupActivityMap,
+  listGroupCache,
+  touchFriendActivity,
+} from '../db/rules.js';
 import { SendQueue } from '../relay/queue.js';
 import {
   parseGroupMessage,
@@ -366,7 +371,8 @@ export class PersonalAccountAdapter {
 
   /**
    * Chat 1-1 (bạn bè) — id = userId Zalo.
-   * Sắp xếp theo thời gian tin gần nhất (unread / lastActionTime).
+   * Sắp xếp theo thời gian tin gần nhất (unread / friends_cache / WS).
+   * Không dùng lastActionTime — đó là online, không phải tin nhắn.
    */
   async listFriends(): Promise<
     Array<{ userId: string; name: string; lastActiveAt?: number; pinned?: boolean }>
@@ -402,24 +408,49 @@ export class PersonalAccountAdapter {
       logger.warn({ err, tenantId: this.tenantId }, 'getPinConversations (user) failed');
     }
 
+    const cached = getFriendActivityMap(this.tenantId);
+    let wsTs = new Map<string, number>();
+    try {
+      wsTs = await this.probeUserRecentActivityViaWs();
+      for (const [id, ts] of wsTs) {
+        touchFriendActivity(this.tenantId, id, ts);
+      }
+    } catch (err) {
+      logger.warn(
+        { err, tenantId: this.tenantId },
+        'WS probe user recent activity failed',
+      );
+    }
+
+    const pickTs = (userId: string): number | undefined => {
+      const candidates = [
+        unreadTs.get(userId),
+        wsTs.get(userId),
+        cached.get(userId),
+      ].filter((n): n is number => typeof n === 'number' && n > 0);
+      if (candidates.length === 0) {
+        for (const map of [unreadTs, wsTs, cached]) {
+          for (const [id, ts] of map) {
+            if (zaloIdEqual(id, userId) && ts > 0) candidates.push(ts);
+          }
+        }
+      }
+      return candidates.length ? Math.max(...candidates) : undefined;
+    };
+
     const items = (friends ?? []).map((f) => {
       const userId = String(f.userId);
       const name =
         (f.displayName || f.zaloName || f.username || userId).trim() || userId;
-      const lastAction = normalizeZaloTs(
-        f.lastActionTime != null ? Number(f.lastActionTime) : undefined,
-      );
-      const lastActiveAt =
-        Math.max(unreadTs.get(userId) ?? 0, lastAction ?? 0) || undefined;
       return {
         userId,
         name,
-        lastActiveAt,
+        lastActiveAt: pickTs(userId),
         pinned: pinned.has(userId),
       };
     });
 
-    // Thời gian giảm dần; không có ts xuống cuối; ghim chỉ đánh dấu, không ưu tiên.
+    // Thời gian tin giảm dần; không có ts xuống cuối; ghim chỉ đánh dấu.
     items.sort((a, b) => {
       const at = a.lastActiveAt ?? 0;
       const bt = b.lastActiveAt ?? 0;
@@ -428,6 +459,143 @@ export class PersonalAccountAdapter {
     });
 
     return items;
+  }
+
+  /**
+   * Quét vài page old_messages (User) → map threadId → ts tin mới nhất.
+   */
+  private async probeUserRecentActivityViaWs(
+    maxPages = 8,
+    timeoutMs = 6_000,
+  ): Promise<Map<string, number>> {
+    const run = () =>
+      this.probeUserRecentActivityViaWsUnlocked(maxPages, timeoutMs);
+    const prev = this.userHistoryTail;
+    let release!: () => void;
+    this.userHistoryTail = new Promise<void>((r) => {
+      release = r;
+    });
+    await prev.catch(() => undefined);
+    try {
+      return await run();
+    } finally {
+      release();
+    }
+  }
+
+  private probeUserRecentActivityViaWsUnlocked(
+    maxPages: number,
+    timeoutMs: number,
+  ): Promise<Map<string, number>> {
+    const listener = this.api.listener as typeof this.api.listener & {
+      on(
+        event: 'old_messages',
+        cb: (messages: ZaloListenerMessage[], type: ThreadType) => void,
+      ): void;
+      off?(
+        event: 'old_messages',
+        cb: (messages: ZaloListenerMessage[], type: ThreadType) => void,
+      ): void;
+      removeListener?(
+        event: 'old_messages',
+        cb: (messages: ZaloListenerMessage[], type: ThreadType) => void,
+      ): void;
+      requestOldMessages?(
+        threadType: ThreadType,
+        lastMsgId?: string | null,
+      ): void;
+    };
+
+    const requestOld = listener.requestOldMessages?.bind(listener);
+    if (typeof requestOld !== 'function') {
+      return Promise.resolve(new Map());
+    }
+
+    return new Promise((resolve) => {
+      const byThread = new Map<string, number>();
+      let pages = 0;
+      let cursor: string | null = null;
+      let settled = false;
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const cleanup = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        const off = listener.off ?? listener.removeListener;
+        if (typeof off === 'function') {
+          off.call(listener, 'old_messages', onOld);
+        }
+      };
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        logger.info(
+          {
+            tenantId: this.tenantId,
+            pages,
+            threads: byThread.size,
+          },
+          'Probed user recent activity via WS',
+        );
+        resolve(byThread);
+      };
+
+      const armIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => finish(), 2_500);
+      };
+
+      const onOld = (msgs: ZaloListenerMessage[], type: ThreadType) => {
+        if (settled) return;
+        if (type !== ThreadType.User && Number(type) !== ThreadType.User) {
+          return;
+        }
+        pages += 1;
+        armIdle();
+
+        for (const m of msgs) {
+          const tid = String(m.threadId ?? '');
+          if (!tid) continue;
+          const ts = normalizeZaloTs(
+            m.data?.ts != null ? Number(m.data.ts) : undefined,
+          );
+          if (ts == null) continue;
+          const prev = byThread.get(tid) ?? 0;
+          if (ts > prev) byThread.set(tid, ts);
+        }
+
+        const last = msgs[msgs.length - 1];
+        const nextCursor =
+          last?.data?.msgId != null ? String(last.data.msgId) : null;
+
+        if (msgs.length === 0 || pages >= maxPages) {
+          finish();
+          return;
+        }
+        if (!nextCursor || nextCursor === cursor) {
+          finish();
+          return;
+        }
+        cursor = nextCursor;
+        try {
+          requestOld(ThreadType.User, cursor);
+        } catch {
+          finish();
+        }
+      };
+
+      listener.on('old_messages', onOld);
+      armIdle();
+      try {
+        requestOld(ThreadType.User, null);
+      } catch {
+        finish();
+        return;
+      }
+
+      setTimeout(() => finish(), timeoutMs);
+    });
   }
 
   async listGroups(): Promise<
