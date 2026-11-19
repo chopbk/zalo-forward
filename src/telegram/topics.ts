@@ -1,6 +1,7 @@
 import type { Api } from 'grammy';
 import logger from '../config/logger.js';
 import {
+  DM_INBOX_SOURCE,
   findTopicById,
   findTopicBySource,
   insertTelegramTopic,
@@ -11,7 +12,10 @@ import {
   type TelegramTopic,
 } from '../db/telegram-topics.js';
 import { getGroupName } from '../db/rules.js';
-import { requireTenantForum } from '../db/tenant-telegram.js';
+import {
+  requireTenantForum,
+  setDmInbox,
+} from '../db/tenant-telegram.js';
 import { getTelegramApi, truncateTopicTitle } from './client.js';
 import { telegramDestKey } from './dest.js';
 import { isTelegramEnabled } from '../config/env.js';
@@ -139,6 +143,64 @@ export async function recreateTopicById(topicId: number): Promise<TelegramTopic 
   if (!topic) return null;
   setTopicMissing(topicId, true);
   return recreateTopic(api, { ...topic, topicMissing: true });
+}
+
+/**
+ * Tạo (hoặc tái dùng) topic "DM Inbox" — gom tin 1-1 chưa /useradd.
+ * Luôn readonly; reply chỉ khi reply đúng tin đã bridge (xem outbound).
+ */
+export async function ensureDmInboxTopic(
+  tenantId: number,
+): Promise<{ topic: TelegramTopic; created: boolean }> {
+  if (!isTelegramEnabled()) {
+    throw new Error('Telegram chưa bật. Điền TELEGRAM_BOT_TOKEN trong .env');
+  }
+  const api = getTelegramApi();
+  if (!api) {
+    throw new Error('Telegram chưa bật. Điền TELEGRAM_BOT_TOKEN trong .env');
+  }
+
+  const forum = requireTenantForum(tenantId);
+  const chatId = forum.forumGroupId;
+  const existing = findTopicBySource(tenantId, DM_INBOX_SOURCE, chatId);
+  if (existing && !existing.topicMissing) {
+    setDmInbox(tenantId, { enabled: true, topicId: existing.telegramTopicId });
+    return { topic: existing, created: false };
+  }
+  if (existing?.topicMissing) {
+    const recreated = await recreateTopic(api, existing);
+    setDmInbox(tenantId, { enabled: true, topicId: recreated.telegramTopicId });
+    return { topic: recreated, created: true };
+  }
+
+  const title = truncateTopicTitle('DM Inbox · 1-1 chưa map');
+  const created = await api.createForumTopic(chatId, title);
+  const topicId = created.message_thread_id;
+  try {
+    const topic = insertTelegramTopic({
+      telegramTopicId: topicId,
+      tenantId,
+      ruleId: null,
+      sourceGroupId: DM_INBOX_SOURCE,
+      telegramChatId: chatId,
+      topicTitle: title,
+      inboundOnly: true,
+      threadKind: 'user',
+    });
+    setDmInbox(tenantId, { enabled: true, topicId });
+    logger.info(
+      { tenantId, topicId, forum: chatId },
+      'Created DM Inbox topic',
+    );
+    return { topic, created: true };
+  } catch (err) {
+    try {
+      await api.deleteForumTopic(chatId, topicId);
+    } catch (delErr) {
+      logger.warn({ delErr, topicId }, 'Failed to delete orphan DM inbox topic');
+    }
+    throw err;
+  }
 }
 
 export function markTopicMissingFromError(topicId: number, err: unknown): void {

@@ -3,12 +3,18 @@ import { getEnv, isTelegramEnabled } from '../config/env.js';
 import logger from '../config/logger.js';
 import {
   findTenantTelegramByForum,
+  getTenantTelegram,
   isForumAdmin,
+  setDmInbox,
   type TenantTelegram,
 } from '../db/tenant-telegram.js';
 import {
+  DM_INBOX_SOURCE,
   findTopicById,
+  insertTelegramTopic,
+  isDmInboxTopic,
   listTopicsByTenant,
+  markAsDmInbox,
   setInboundOnly,
   setThreadKind,
   updateTopicTitle,
@@ -26,7 +32,7 @@ import { formatRelativeTime } from '../personal/adapter.js';
 import { sessionManager } from '../personal/manager.js';
 import { getTelegramBot, getTelegramApi, verifyTelegramForum } from './client.js';
 import { forwardTopicReplyToZalo } from './outbound.js';
-import { recreateTopicById } from './topics.js';
+import { ensureDmInboxTopic, recreateTopicById } from './topics.js';
 import { upsertRuleWithTelegram } from './resolve-targets.js';
 import { parseTelegramDest, telegramDestKey } from './dest.js';
 import { getDb } from '../db/client.js';
@@ -127,6 +133,7 @@ function wireHandlers(bot: Bot): void {
     '/history — nạp lịch sử (group hoặc 1-1) vào topic',
     '/del — reply tin → xoá TG + thu hồi Zalo',
     '/readonly | /twoway — đổi một chiều / hai chiều',
+    '/inbox on|off|here|status — gom tin 1-1 chưa map vào 1 topic',
     '/zalochats [user|group] — chat Zalo gần đây',
     '/zalogroups · /zalofriends — chỉ group / chỉ 1-1',
     '',
@@ -188,6 +195,7 @@ function wireHandlers(bot: Bot): void {
         `Zalo session: ${session?.status ?? 'none'}`,
         `Topics: ${topics.length}`,
         `Rules: ${listRules(forum.cfg.tenantId).length}`,
+        `DM Inbox: ${forum.cfg.dmInboxEnabled ? `BẬT #${forum.cfg.dmInboxTopicId ?? '?'}` : 'tắt'}`,
       ].join('\n'),
     );
   });
@@ -203,10 +211,107 @@ function wireHandlers(bot: Bot): void {
     const lines = topics.map((t) => {
       const flag = t.inboundOnly ? 'RO' : 'RW';
       const miss = t.topicMissing ? ' MISSING' : '';
-      return `#${t.telegramTopicId} [${flag}${miss}] ${t.sourceGroupId}` +
+      const inbox = isDmInboxTopic(t) ? ' INBOX' : '';
+      return `#${t.telegramTopicId} [${flag}${miss}${inbox}] ${t.sourceGroupId}` +
         (t.topicTitle ? `\n  ${t.topicTitle}` : '');
     });
     await ctx.reply(lines.join('\n\n'));
+  });
+
+  bot.command(['inbox', 'dminbox'], async (ctx) => {
+    const forum = requireForumAdmin(ctx);
+    if (!forum) return;
+    const arg = (ctx.message?.text ?? '')
+      .replace(/^\/\S+\s*/, '')
+      .trim()
+      .toLowerCase();
+    const cfg = getTenantTelegram(forum.cfg.tenantId) ?? forum.cfg;
+
+    if (!arg || arg === 'status' || arg === 'st') {
+      const topic =
+        cfg.dmInboxTopicId != null ? findTopicById(cfg.dmInboxTopicId) : null;
+      await ctx.reply(
+        [
+          `DM Inbox: ${cfg.dmInboxEnabled ? 'BẬT' : 'TẮT'}`,
+          topic
+            ? `Topic: #${topic.telegramTopicId} — ${topic.topicTitle ?? 'DM Inbox'}`
+            : 'Topic: (chưa gắn)',
+          '',
+          'Lệnh:',
+          '/inbox on — tạo topic gom tin + bật',
+          '/inbox off — tắt (giữ topic)',
+          '/inbox here — dùng topic hiện tại làm inbox',
+          '',
+          'Tin 1-1 chưa /useradd → vào inbox.',
+          'Thấy hay → /useradd <id> user (tách topic riêng).',
+          'Reply nhanh trong inbox: reply đúng tin đã bridge.',
+        ].join('\n'),
+      );
+      return;
+    }
+
+    if (arg === 'off' || arg === 'disable' || arg === '0') {
+      setDmInbox(forum.cfg.tenantId, { enabled: false });
+      await ctx.reply('Đã tắt DM Inbox. Tin 1-1 chưa map sẽ không vào Telegram.');
+      return;
+    }
+
+    if (arg === 'on' || arg === 'enable' || arg === '1') {
+      const { topic, created } = await ensureDmInboxTopic(forum.cfg.tenantId);
+      await ctx.reply(
+        [
+          created ? 'Đã tạo topic DM Inbox.' : 'Dùng lại topic DM Inbox.',
+          `Topic #${topic.telegramTopicId} — ${topic.topicTitle ?? 'DM Inbox'}`,
+          'Đã BẬT. Tin 1-1 chưa map sẽ gom vào đây.',
+        ].join('\n'),
+      );
+      return;
+    }
+
+    if (arg === 'here' || arg === 'this') {
+      const threadId = ctx.message?.message_thread_id;
+      if (threadId == null) {
+        await ctx.reply('Chạy /inbox here bên trong một forum topic.');
+        return;
+      }
+      let topic = findTopicById(threadId);
+      if (!topic) {
+        // Gắn topic Telegram sẵn có làm inbox (chưa có row DB)
+        topic = insertTelegramTopic({
+          telegramTopicId: threadId,
+          tenantId: forum.cfg.tenantId,
+          ruleId: null,
+          sourceGroupId: DM_INBOX_SOURCE,
+          telegramChatId: forum.chatId,
+          topicTitle: 'DM Inbox · 1-1 chưa map',
+          inboundOnly: true,
+          threadKind: 'user',
+        });
+      } else if (topic.tenantId !== forum.cfg.tenantId) {
+        await ctx.reply('Topic không thuộc forum này.');
+        return;
+      } else if (!isDmInboxTopic(topic)) {
+        if (/^\d+$/.test(topic.sourceGroupId)) {
+          await ctx.reply(
+            `Topic #${threadId} đang map \`${topic.sourceGroupId}\`.\n` +
+              'Dùng /inbox on (tạo topic mới) hoặc topic trống.',
+          );
+          return;
+        }
+        markAsDmInbox(threadId, 'DM Inbox · 1-1 chưa map');
+        topic = findTopicById(threadId)!;
+      }
+      setDmInbox(forum.cfg.tenantId, {
+        enabled: true,
+        topicId: topic.telegramTopicId,
+      });
+      await ctx.reply(
+        `Đã BẬT DM Inbox tại topic #${topic.telegramTopicId}.`,
+      );
+      return;
+    }
+
+    await ctx.reply('Dùng: /inbox · /inbox on · /inbox off · /inbox here');
   });
 
   bot.command(['useradd', 'user_add', 'addtg'], async (ctx) => {

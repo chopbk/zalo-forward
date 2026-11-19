@@ -6,6 +6,9 @@ export type TenantTelegram = {
   forumGroupId: string;
   adminIds: string[];
   enabled: boolean;
+  /** Topic gom mọi tin 1-1 chưa /useradd */
+  dmInboxTopicId: number | null;
+  dmInboxEnabled: boolean;
   updatedAt: string;
 };
 
@@ -14,6 +17,8 @@ type Row = {
   forum_group_id: string;
   admin_ids: string;
   enabled: number;
+  dm_inbox_topic_id?: number | null;
+  dm_inbox_enabled?: number | null;
   updated_at: string;
 };
 
@@ -23,6 +28,11 @@ function mapRow(row: Row): TenantTelegram {
     forumGroupId: row.forum_group_id,
     adminIds: parseIdList(row.admin_ids ?? ''),
     enabled: row.enabled === 1,
+    dmInboxTopicId:
+      row.dm_inbox_topic_id != null && Number(row.dm_inbox_topic_id) > 0
+        ? Number(row.dm_inbox_topic_id)
+        : null,
+    dmInboxEnabled: Number(row.dm_inbox_enabled ?? 0) === 1,
     updatedAt: row.updated_at,
   };
 }
@@ -105,6 +115,29 @@ export function setTenantTelegramEnabled(
        WHERE tenant_id = ?`,
     )
     .run(enabled ? 1 : 0, tenantId);
+  return getTenantTelegram(tenantId);
+}
+
+/** Bật/tắt + gắn topic gom tin 1-1 chưa map. */
+export function setDmInbox(
+  tenantId: number,
+  opts: { enabled?: boolean; topicId?: number | null },
+): TenantTelegram | null {
+  const existing = getTenantTelegram(tenantId);
+  if (!existing) return null;
+  const enabled =
+    opts.enabled != null ? opts.enabled : existing.dmInboxEnabled;
+  const topicId =
+    opts.topicId !== undefined ? opts.topicId : existing.dmInboxTopicId;
+  getDb()
+    .prepare(
+      `UPDATE tenant_telegram
+       SET dm_inbox_enabled = ?,
+           dm_inbox_topic_id = ?,
+           updated_at = datetime('now')
+       WHERE tenant_id = ?`,
+    )
+    .run(enabled ? 1 : 0, topicId, tenantId);
   return getTenantTelegram(tenantId);
 }
 

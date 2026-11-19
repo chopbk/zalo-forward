@@ -17,15 +17,33 @@ export type TelegramSendPayload = {
   images?: Array<{ url: string }>;
   senderName?: string;
   isSelf?: boolean;
+  /** DM Inbox: hiện thêm id để /useradd dễ copy */
+  inboxUserId?: string;
 };
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function buildHtml(payload: TelegramSendPayload): string {
+  const body = payload.text ?? '';
+  if (payload.inboxUserId) {
+    const who = payload.isSelf
+      ? 'Bạn'
+      : payload.senderName
+        ? escapeHtml(payload.senderName)
+        : escapeHtml(payload.inboxUserId);
+    const head = `<b>${who}</b>\n<code>${escapeHtml(payload.inboxUserId)}</code>\n`;
+    return head + zaloStylesToTelegramHtml(body, payload.styles ?? []);
+  }
   const prefix = payload.isSelf
     ? 'Bạn: '
     : payload.senderName
       ? `${payload.senderName}: `
       : '';
-  const body = payload.text ?? '';
   return (
     zaloStylesToTelegramHtml(prefix, []) +
     zaloStylesToTelegramHtml(body, payload.styles ?? [])

@@ -2,6 +2,9 @@ import { getDb } from './client.js';
 
 export type ThreadKind = 'user' | 'group';
 
+/** source_group_id đặc biệt: topic gom mọi chat 1-1 chưa /useradd */
+export const DM_INBOX_SOURCE = '__dm_inbox__';
+
 export type TelegramTopic = {
   telegramTopicId: number;
   tenantId: number;
@@ -14,6 +17,12 @@ export type TelegramTopic = {
   threadKind: ThreadKind;
   createdAt: string;
 };
+
+export function isDmInboxTopic(
+  topic: Pick<TelegramTopic, 'sourceGroupId'>,
+): boolean {
+  return topic.sourceGroupId === DM_INBOX_SOURCE;
+}
 
 type Row = {
   telegram_topic_id: number;
@@ -98,6 +107,20 @@ export function setThreadKind(topicId: number, threadKind: ThreadKind): void {
   getDb()
     .prepare(`UPDATE telegram_topics SET thread_kind = ? WHERE telegram_topic_id = ?`)
     .run(threadKind === 'user' ? 'user' : 'group', topicId);
+}
+
+/** Đánh dấu topic làm DM Inbox (đổi source_group_id). */
+export function markAsDmInbox(topicId: number, title?: string): void {
+  getDb()
+    .prepare(
+      `UPDATE telegram_topics
+       SET source_group_id = ?,
+           thread_kind = 'user',
+           inbound_only = 1,
+           topic_title = COALESCE(?, topic_title)
+       WHERE telegram_topic_id = ?`,
+    )
+    .run(DM_INBOX_SOURCE, title ?? null, topicId);
 }
 
 export function updateTopicRuleId(topicId: number, ruleId: number): void {

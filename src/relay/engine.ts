@@ -21,6 +21,7 @@ import {
   updateSignalEventDestMessage,
 } from '../db/signal-events.js';
 import { canRelay, findTenantById, getSession, type Tenant } from '../db/tenants.js';
+import { getTenantTelegram } from '../db/tenant-telegram.js';
 import type { NormalizedGroupMessage } from './normalize.js';
 import { resolveDestinations } from './match.js';
 import {
@@ -31,9 +32,13 @@ import {
 import { sessionManager } from '../personal/manager.js';
 import { reformatSignalMessage } from './reformat-signal.js';
 import { parseSignalMeta, type SignalMeta } from './signal-meta.js';
-import { isTelegramDest, parseTelegramDest } from '../telegram/dest.js';
+import { isTelegramDest, parseTelegramDest, telegramDestKey } from '../telegram/dest.js';
 import { sendPayloadToTelegramTopic } from '../telegram/send.js';
-import { findTopicById, setThreadKind } from '../db/telegram-topics.js';
+import {
+  findTopicById,
+  isDmInboxTopic,
+  setThreadKind,
+} from '../db/telegram-topics.js';
 import { upsertMessageLink } from '../db/message-links.js';
 
 let drainTimer: ReturnType<typeof setInterval> | null = null;
@@ -61,6 +66,10 @@ export async function handleGroupInbound(
 
   const rules = listEnabledRulesForSource(tenant.id, msg.groupId);
   if (rules.length === 0) {
+    // 1-1 chưa /useradd → gom vào DM Inbox (nếu bật)
+    if (msg.threadKind === 'user' && enqueueDmInbox(tenant, msg)) {
+      return;
+    }
     logger.debug(
       {
         tenantId: tenant.id,
@@ -203,6 +212,54 @@ export async function handleGroupInbound(
   );
 }
 
+/** Gom tin 1-1 chưa map vào topic DM Inbox. Trả true nếu đã enqueue. */
+function enqueueDmInbox(tenant: Tenant, msg: NormalizedGroupMessage): boolean {
+  const cfg = getTenantTelegram(tenant.id);
+  if (!cfg?.dmInboxEnabled || !cfg.dmInboxTopicId) return false;
+  const topic = findTopicById(cfg.dmInboxTopicId);
+  if (!topic || topic.topicMissing || !isDmInboxTopic(topic)) return false;
+
+  const userId = msg.groupId;
+  const display =
+    (msg.isSelf ? 'Bạn' : msg.senderName?.trim()) || userId;
+  const label = msg.isSelf ? `Bạn → ${userId}` : `${display} · ${userId}`;
+
+  const body = formatForwardBody(msg);
+  const hasImages = msg.images.length > 0;
+  const item: ForwardJobPayload = {
+    sourceGroupId: userId,
+    destGroupId: telegramDestKey(topic.telegramTopicId),
+    destType: 'telegram',
+    telegramTopicId: topic.telegramTopicId,
+    telegramChatId: topic.telegramChatId,
+    text: body.text,
+    rawText: msg.text ?? '',
+    reformatted: body.reformatted,
+    images: hasImages ? msg.images : undefined,
+    styles: body.styles.length > 0 ? body.styles : undefined,
+    mentions: body.mentions,
+    sourceMessageId: msg.messageId,
+    sourceTs: msg.ts,
+    preferNativeForward: false,
+    senderName: label,
+    isSelf: msg.isSelf,
+    threadKind: 'user',
+  };
+
+  enqueueForwardJobs(tenant.id, [item]);
+  logger.info(
+    {
+      tenantId: tenant.id,
+      userId,
+      topicId: topic.telegramTopicId,
+      messageId: msg.messageId,
+      sender: display,
+    },
+    'Enqueued 1-1 → DM Inbox',
+  );
+  return true;
+}
+
 function buildSignalStore(
   signal: SignalMeta | null,
 ): ForwardJobPayload['signalStore'] {
@@ -274,16 +331,23 @@ async function processOneJob(): Promise<boolean> {
       if (!topicId) {
         throw new Error(`Invalid telegram dest: ${payload.destGroupId}`);
       }
+      const topicMeta = findTopicById(topicId);
+      const toInbox = topicMeta ? isDmInboxTopic(topicMeta) : false;
       const tgMsgId = await sendPayloadToTelegramTopic({
         topicId,
         chatId: payload.telegramChatId,
         text: payload.text,
         styles: payload.styles,
         images: payload.images,
-        // 1-1: topic đã là người đó — chỉ prefix "Bạn:" khi isSelf
-        senderName:
-          payload.threadKind === 'user' ? undefined : payload.senderName,
+        // 1-1 riêng: topic đã là người đó — chỉ prefix "Bạn:".
+        // Inbox gom nhiều người → luôn hiện tên + id.
+        senderName: toInbox
+          ? payload.senderName ?? payload.sourceGroupId
+          : payload.threadKind === 'user'
+            ? undefined
+            : payload.senderName,
         isSelf: payload.isSelf,
+        inboxUserId: toInbox ? payload.sourceGroupId : undefined,
       });
       if (tgMsgId != null && payload.sourceMessageId) {
         const topic = findTopicById(topicId);

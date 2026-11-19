@@ -27,6 +27,7 @@ Ngoài Zalo group → Zalo group, hỗ trợ **Zalo group / 1-1 → Telegram for
 | `/del` + edit sync + Zalo undo map | Đăng ký 1-1 tự động |
 | `/search` `/useredit` batch | |
 | Reply topic → Zalo (twoway) | |
+| `/inbox` — gom tin 1-1 chưa map vào 1 topic | |
 
 ## Lệnh Telegram (forum admin)
 
