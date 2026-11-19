@@ -4,9 +4,15 @@ import { getEnv } from '../config/env.js';
 import type { ForwardMention, ForwardStyle } from '../relay/styles.js';
 import type { SignalKind, SignalMeta } from '../relay/signal-meta.js';
 
+export type ForwardDestType = 'zalo' | 'telegram';
+
 export type ForwardJobPayload = {
   sourceGroupId: string;
   destGroupId: string;
+  /** Mặc định zalo — telegram khi dest là tg:#topicId */
+  destType?: ForwardDestType;
+  telegramTopicId?: number;
+  telegramChatId?: string;
   text?: string;
   /** Text gốc trước reformat — lưu backtest. */
   rawText?: string;

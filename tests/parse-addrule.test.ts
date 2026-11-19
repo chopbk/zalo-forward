@@ -7,6 +7,7 @@ describe('parseAddRuleCommand', () => {
     expect(r).toEqual({
       sourceGroupId: '111',
       targets: ['222', '333'],
+      wantsTelegram: false,
       filterMode: 'all',
       keywords: [],
     });
@@ -14,7 +15,11 @@ describe('parseAddRuleCommand', () => {
 
   it('defaults to all when filter omitted', () => {
     const r = parseAddRuleCommand('/addrule 111 222,333');
-    expect(r).toMatchObject({ filterMode: 'all', targets: ['222', '333'] });
+    expect(r).toMatchObject({
+      filterMode: 'all',
+      targets: ['222', '333'],
+      wantsTelegram: false,
+    });
   });
 
   it('parses keywords', () => {
@@ -22,8 +27,28 @@ describe('parseAddRuleCommand', () => {
     expect(r).toEqual({
       sourceGroupId: '111',
       targets: ['222'],
+      wantsTelegram: false,
       filterMode: 'keywords',
       keywords: ['sale', 'hot', 'giảm giá'],
+    });
+  });
+
+  it('parses tg token', () => {
+    const r = parseAddRuleCommand('/addrule 111 tg all');
+    expect(r).toEqual({
+      sourceGroupId: '111',
+      targets: [],
+      wantsTelegram: true,
+      filterMode: 'all',
+      keywords: [],
+    });
+  });
+
+  it('parses tg mixed with zalo dest', () => {
+    const r = parseAddRuleCommand('/addrule 111 tg,222 all');
+    expect(r).toMatchObject({
+      targets: ['222'],
+      wantsTelegram: true,
     });
   });
 
@@ -42,6 +67,7 @@ describe('parseSetRuleArgs', () => {
     expect(parseSetRuleArgs('3 222,333 all')).toEqual({
       ruleId: 3,
       targets: ['222', '333'],
+      wantsTelegram: false,
       filterMode: 'all',
       keywords: [],
     });
@@ -51,6 +77,7 @@ describe('parseSetRuleArgs', () => {
     expect(parseSetRuleArgs('7 222 keywords sale,hot')).toEqual({
       ruleId: 7,
       targets: ['222'],
+      wantsTelegram: false,
       filterMode: 'keywords',
       keywords: ['sale', 'hot'],
     });

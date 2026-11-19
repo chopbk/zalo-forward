@@ -2,7 +2,7 @@
   "name": "zalo-message-forward",
   "version": "0.1.0",
   "private": true,
-  "description": "Multi-tenant Zalo group → group message forward, configured via Zalo Bot Platform",
+  "description": "Multi-tenant Zalo group → Zalo groups / Telegram topics, configured via Zalo Bot Platform",
   "license": "MIT",
   "type": "module",
   "main": "dist/server.js",
@@ -15,12 +15,14 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "telegram:ids": "tsx scripts/telegram-ids.ts"
   },
   "dependencies": {
     "better-sqlite3": "9.6.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "grammy": "^1.46.0",
     "image-size": "^2.0.4",
     "localtunnel": "^2.0.2",
     "pino": "^10.3.1",

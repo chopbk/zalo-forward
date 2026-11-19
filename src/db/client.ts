@@ -41,7 +41,7 @@ export type ForwardRuleRow = {
 
 let db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 6;
 
 export function getDb(): Database.Database {
   if (db) return db;
@@ -265,6 +265,65 @@ function migrate(database: Database.Database): void {
         ON signal_events(tenant_id, order_key, id);
       CREATE INDEX IF NOT EXISTS idx_signal_events_kind
         ON signal_events(tenant_id, kind, id);
+    `);
+    database
+      .prepare(
+        `INSERT INTO schema_meta(key, value) VALUES('version', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run('4');
+    logger.info({ version: 4 }, 'DB migrated');
+  }
+
+  const after4 = database
+    .prepare(`SELECT value FROM schema_meta WHERE key = 'version'`)
+    .get() as { value: string } | undefined;
+  const ver4 = after4 ? Number(after4.value) : 0;
+
+  if (ver4 < 5) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS telegram_topics (
+        telegram_topic_id INTEGER PRIMARY KEY,
+        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        rule_id INTEGER REFERENCES forward_rules(id) ON DELETE SET NULL,
+        source_group_id TEXT NOT NULL,
+        telegram_chat_id TEXT NOT NULL,
+        topic_title TEXT,
+        inbound_only INTEGER NOT NULL DEFAULT 0,
+        topic_missing INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (tenant_id, source_group_id, telegram_chat_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_telegram_topics_rule
+        ON telegram_topics(rule_id);
+      CREATE INDEX IF NOT EXISTS idx_telegram_topics_tenant
+        ON telegram_topics(tenant_id);
+    `);
+    database
+      .prepare(
+        `INSERT INTO schema_meta(key, value) VALUES('version', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run('5');
+    logger.info({ version: 5 }, 'DB migrated');
+  }
+
+  const after5 = database
+    .prepare(`SELECT value FROM schema_meta WHERE key = 'version'`)
+    .get() as { value: string } | undefined;
+  const ver5 = after5 ? Number(after5.value) : 0;
+
+  if (ver5 < 6) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS tenant_telegram (
+        tenant_id INTEGER PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+        forum_group_id TEXT NOT NULL UNIQUE,
+        admin_ids TEXT NOT NULL DEFAULT '',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_tenant_telegram_forum
+        ON tenant_telegram(forum_group_id);
     `);
     database
       .prepare(

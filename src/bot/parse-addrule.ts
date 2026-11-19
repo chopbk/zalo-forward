@@ -1,6 +1,8 @@
 export type ParsedAddRule = {
   sourceGroupId: string;
   targets: string[];
+  /** Có token `tg` / `telegram` — cần tạo/gắn topic trước khi lưu luật */
+  wantsTelegram: boolean;
   filterMode: 'all' | 'keywords';
   keywords: string[];
 };
@@ -9,6 +11,10 @@ export const ADDRULE_USAGE =
   `Format:\n` +
   `/addrule <id_nguồn> <id_đích,...> all\n` +
   `/addrule <id_nguồn> <id_đích,...> keywords <từ_khóa,...>\n\n` +
+  `Đích Telegram: dùng token tg (tạo topic forum):\n` +
+  `/addrule <id_nguồn> tg all\n` +
+  `/addrule <id_nguồn> tg,9045222 all\n` +
+  `Hoặc: /addtg <id_nguồn> all\n\n` +
   `Cùng nguồn → tự sửa luật cũ (không tạo trùng).\n` +
   `Hoặc: /rules set <id_luật> <id_đích,...> all\n\n` +
   `Ví dụ:\n` +
@@ -29,19 +35,38 @@ function parseTargetsAndFilter(
   usage: string,
   examplePrefix: string,
 ):
-  | { targets: string[]; filterMode: 'all' | 'keywords'; keywords: string[] }
+  | {
+      targets: string[];
+      wantsTelegram: boolean;
+      filterMode: 'all' | 'keywords';
+      keywords: string[];
+    }
   | { error: string } {
-  const targets = targetsRaw
+  const rawParts = targetsRaw
     .split(/[,;]+/)
     .map((s) => s.trim())
     .filter(Boolean);
-  if (targets.length === 0) {
+  if (rawParts.length === 0) {
+    return { error: `Thiếu group đích.\n\n${usage}` };
+  }
+
+  let wantsTelegram = false;
+  const targets: string[] = [];
+  for (const part of rawParts) {
+    const lower = part.toLowerCase();
+    if (lower === 'tg' || lower === 'telegram') {
+      wantsTelegram = true;
+      continue;
+    }
+    targets.push(part);
+  }
+  if (!wantsTelegram && targets.length === 0) {
     return { error: `Thiếu group đích.\n\n${usage}` };
   }
 
   const mode = (filterRaw ?? 'all').toLowerCase();
   if (mode === 'all') {
-    return { targets, filterMode: 'all', keywords: [] };
+    return { targets, wantsTelegram, filterMode: 'all', keywords: [] };
   }
   if (mode === 'keywords') {
     const keywords = kwRaw
@@ -56,7 +81,7 @@ function parseTargetsAndFilter(
           usage,
       };
     }
-    return { targets, filterMode: 'keywords', keywords };
+    return { targets, wantsTelegram, filterMode: 'keywords', keywords };
   }
   return { error: `Sai format.\n\n${usage}` };
 }
@@ -88,6 +113,7 @@ export function parseAddRuleCommand(text: string): ParsedAddRule | { error: stri
 export type ParsedSetRule = {
   ruleId: number;
   targets: string[];
+  wantsTelegram: boolean;
   filterMode: 'all' | 'keywords';
   keywords: string[];
 };

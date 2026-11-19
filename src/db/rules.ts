@@ -1,4 +1,5 @@
 import { getDb, type FilterMode, type ForwardRuleRow } from './client.js';
+import { parseSignalMeta } from '../relay/signal-meta.js';
 
 export type ForwardRule = {
   id: number;
@@ -305,16 +306,36 @@ export function removeKeyword(ruleId: number, keyword: string): ForwardRule | nu
   return getRule(ruleId);
 }
 
+/** Bỏ cụm hay gây false positive (vd. keyword "đồng" ∈ "đồng thời"). */
+export function sanitizeKeywordHaystack(text: string): string {
+  return text.replace(/đồng\s+thời/gi, ' ');
+}
+
 /** Substring match, case-insensitive */
 export function matchesKeywords(text: string, keywords: string[]): boolean {
   if (keywords.length === 0) return false;
-  const hay = text.toLowerCase();
+  const hay = sanitizeKeywordHaystack(text).toLowerCase();
   return keywords.some((kw) => hay.includes(kw.toLowerCase()));
 }
 
+/**
+ * keywords: với tin tín hiệu chỉ so product + mã hợp đồng (+ dòng tiêu đề),
+ * tránh khớp thân tin kiểu "đồng thời thiết lập...".
+ */
 export function ruleMatchesContent(rule: ForwardRule, text: string): boolean {
   if (rule.filterMode === 'all') return true;
-  return matchesKeywords(text, rule.keywords);
+  return matchesKeywords(keywordMatchHaystack(text), rule.keywords);
+}
+
+export function keywordMatchHaystack(text: string): string {
+  const signal = parseSignalMeta(text);
+  if (signal) {
+    const firstLine = (text.split(/\r?\n/)[0] ?? '').trim();
+    return [signal.product, signal.code, signal.side, firstLine]
+      .filter(Boolean)
+      .join('\n');
+  }
+  return text;
 }
 
 /**

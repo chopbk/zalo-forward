@@ -25,6 +25,11 @@ describe('matchesKeywords', () => {
   it('needs at least one keyword', () => {
     expect(matchesKeywords('anything', [])).toBe(false);
   });
+
+  it('does not match đồng inside đồng thời', () => {
+    expect(matchesKeywords('đồng thời thiết lập SL', ['đồng'])).toBe(false);
+    expect(matchesKeywords('Đồng micro tháng 3', ['đồng'])).toBe(true);
+  });
 });
 
 describe('ruleMatchesContent', () => {
@@ -36,5 +41,35 @@ describe('ruleMatchesContent', () => {
     const r = rule({ filterMode: 'keywords', keywords: ['hot', 'deal'] });
     expect(ruleMatchesContent(r, 'siêu hot')).toBe(true);
     expect(ruleMatchesContent(r, 'bình thường')).toBe(false);
+  });
+
+  it('signal wheat does not match kim loại keywords via đồng thời', () => {
+    const r = rule({
+      filterMode: 'keywords',
+      keywords: ['bạc', 'bạch kim', 'mhg', 'ple', 'sil', 'đồng'],
+    });
+    const wheat = `🔔 [CHỜ BÁN] LÚA MỲ THÁNG 3 (ZWAH27)
+
+🔸 Giá chờ bán (Sell Limit): 590.30
+🛑 Dừng lỗ: 597.10
+🎯 Chốt lời: 571.26
+
+📌 A/C tiến hành đặt lệnh Sell Limit theo mức giá trên, đồng thời thiết lập Dừng lỗ và Chốt lời tương ứng nhé ạ`;
+    expect(ruleMatchesContent(r, wheat)).toBe(false);
+  });
+
+  it('signal copper still matches đồng / mhg', () => {
+    const r = rule({
+      filterMode: 'keywords',
+      keywords: ['bạc', 'bạch kim', 'mhg', 'ple', 'sil', 'đồng'],
+    });
+    const copper = `🔔 [CHỜ MUA] ĐỒNG MICRO T3 (MHGH27)
+
+🟢 Giá chờ mua (Buy Limit): 602.15
+🛑 Dừng lỗ: 590.00
+🎯 Chốt lời: 620.00
+
+📌 A/C tiến hành đặt lệnh Buy Limit theo mức giá trên, đồng thời thiết lập Dừng lỗ và Chốt lời tương ứng nhé ạ`;
+    expect(ruleMatchesContent(r, copper)).toBe(true);
   });
 });

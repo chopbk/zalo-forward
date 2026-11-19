@@ -12,6 +12,7 @@ import {
   startJobWorker,
   stopJobWorker,
 } from './relay/engine.js';
+import { startTelegramBot, stopTelegramBot } from './telegram/bot.js';
 
 async function main(): Promise<void> {
   const env = getEnv();
@@ -31,7 +32,11 @@ async function main(): Promise<void> {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, service: 'zalo-message-forward' });
+    res.json({
+      ok: true,
+      service: 'zalo-message-forward',
+      telegram: env.telegramEnabled,
+    });
   });
 
   bot.mountQrStatic(app);
@@ -46,13 +51,18 @@ async function main(): Promise<void> {
   await bot.start();
   await sessionManager.startAllReady();
   startJobWorker(500);
+  await startTelegramBot();
 
-  logger.info('Zalo Message Forward is running');
+  logger.info(
+    { telegram: env.telegramEnabled },
+    'Zalo Message Forward is running',
+  );
 
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutting down');
     stopJobWorker();
     closePublicTunnel();
+    await stopTelegramBot();
     await sessionManager.stopAll();
     await bot.stop();
     process.exit(0);

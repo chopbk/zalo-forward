@@ -37,13 +37,25 @@ Khi user gõ `/start`, admin nhận thông báo.
 
 1. `/login` — quét QR nick **phụ** (không mở Zalo Web song song)
 2. `/groups` — copy id group
-3. `/addrule <nguồn> <đích,...> all` — xem `/help addrule`
-4. `/rules` — xem; `/rules off 1` tắt; `/rules del 1` xóa
-5. `/pause` / `/resume` — tạm dừng / bật lại
+3. `/addrule <nguồn> <đích,...> all` — Zalo→Zalo (xem `/help addrule`)
+4. `/addtg <nguồn> all` — Zalo→Telegram topic (nếu server bật TG)
+5. `/rules` — xem; `/rules off 1` tắt; `/rules del 1` xóa
+6. `/pause` / `/resume` — tạm dừng / bật lại
+
+## Telegram topic bridge (1 tenant = 1 forum)
+
+1. Server: `TELEGRAM_BOT_TOKEN` (+ tuỳ chọn `TELEGRAM_ADMIN_IDS` super-admin)
+2. **Mỗi tenant** tạo forum riêng (Topics), add bot admin Manage topics
+3. Trong forum gửi `/id` → copy `chat.id`
+4. Zalo bot: `/tgbind -100…` rồi `/tgadmins <telegram_user_id,...>`
+5. `/addtg <zalo_group_id> all` **hoặc** trong forum: `/useradd <zalo_group_id>`
+6. Reply trong topic (user ∈ tgadmins tenant hoặc TELEGRAM_ADMIN_IDS) → Zalo
+
+Tắt bridge toàn cục: xóa `TELEGRAM_BOT_TOKEN`. Gỡ 1 tenant: `/tgunbind`.
 
 ## Luật chuyển tiếp
 
-- Một nguồn → nhiều đích  
+- Một nguồn → nhiều đích (Zalo group và/hoặc `tg:#topic`)  
 - Lọc **all** = mọi tin text/ảnh/link trong **group nguồn** (mọi thành viên, kể cả nick đã `/login`)  
 - Lọc **keywords** = substring, không phân biệt hoa thường  
 - Tin do bot vừa gửi sang group đích bị lọc echo để giảm vòng lặp  
@@ -56,6 +68,8 @@ Khi user gõ `/start`, admin nhận thông báo.
 | QR không vào chat (VPS) | Set `PUBLIC_BASE_URL=https://...` hoặc `IMGBB_API_KEY`. Xem log `temp host failed` / `sendPhoto`. Không dùng IP HTTP |
 | Listener dừng | Không mở Zalo Web cùng nick; `/logout` rồi `/login` |
 | Không forward | `/status` — approved? session active? relay on? `/addrule` đúng **id group** từ `/groups` (không phải chat 1-1 với bot Official)? |
+| Không tạo topic | `/tgstatus`; bot Telegram admin + Topics; đủ `TELEGRAM_*` |
+| Reply topic không vào Zalo | User Telegram có trong `TELEGRAM_ADMIN_IDS`? Topic không `readonly`? Session tenant `active`? |
 | Chỉ thấy tin của mình | Cần restart sau bản có `selfListen`; kiểm tra log `Enqueued forward jobs` có `sender` khác nhau |
 | Gần bị limit | Tăng `ZALO_MIN_SEND_INTERVAL_MS`, giảm `ZALO_SEND_MAX_PER_MINUTE` |
 

@@ -49,11 +49,25 @@ const baseSchema = z.object({
     .default('false')
     .transform((v) => !['0', 'false', 'no', 'off'].includes(v.trim().toLowerCase())),
   NODE_ENV: z.string().optional(),
+  /**
+   * Telegram bot token (BotFather). Bật bridge khi có token.
+   * Mỗi tenant tự /tgbind forum riêng — không dùng chung 1 forum nữa.
+   */
+  TELEGRAM_BOT_TOKEN: z.string().optional().default(''),
+  /**
+   * @deprecated Không bắt buộc. Forum gắn per-tenant qua /tgbind.
+   * Giữ chỉ để tương thích docs cũ.
+   */
+  TELEGRAM_FORUM_GROUP_ID: z.string().optional().default(''),
+  /** Super-admin Telegram toàn cục (tuỳ chọn). Tenant còn có admin_ids riêng qua /tgadmins. */
+  TELEGRAM_ADMIN_IDS: z.string().optional().default(''),
 });
 
 export type Env = z.infer<typeof baseSchema> & {
   adminZaloUserIds: string[];
+  telegramAdminIds: string[];
   zaloBotTransport: 'polling' | 'webhook';
+  telegramEnabled: boolean;
 };
 
 let cached: Env | null = null;
@@ -99,8 +113,27 @@ export function getEnv(): Env {
     throw new Error('Webhook transport requires ZALO_BOT_WEBHOOK_SECRET');
   }
 
-  cached = { ...data, adminZaloUserIds, zaloBotTransport };
-  return cached;
+  const telegramAdminIds = parseIdList(data.TELEGRAM_ADMIN_IDS ?? '');
+  const telegramToken = (data.TELEGRAM_BOT_TOKEN ?? '').trim();
+  const telegramForum = (data.TELEGRAM_FORUM_GROUP_ID ?? '').trim();
+  /** Chỉ cần bot token — forum gắn per tenant. */
+  const telegramEnabled = Boolean(telegramToken);
+
+  cached = {
+    ...data,
+    TELEGRAM_BOT_TOKEN: telegramToken,
+    TELEGRAM_FORUM_GROUP_ID: telegramForum,
+    adminZaloUserIds,
+    telegramAdminIds,
+    zaloBotTransport,
+    telegramEnabled,
+  };
+  return cached!;
+}
+
+/** Telegram bridge bật khi có TELEGRAM_BOT_TOKEN. */
+export function isTelegramEnabled(): boolean {
+  return getEnv().telegramEnabled;
 }
 
 /** Test helper */

@@ -1,4 +1,8 @@
-import { verifyAdminSetupPassword } from '../config/env.js';
+import {
+  isTelegramEnabled,
+  parseIdList,
+  verifyAdminSetupPassword,
+} from '../config/env.js';
 import logger from '../config/logger.js';
 import { addAdmin, isAdmin } from '../db/admins.js';
 import {
@@ -16,12 +20,23 @@ import {
   listGroupCache,
   listRules,
   setRuleEnabled,
-  updateRule,
-  upsertRuleBySource,
 } from '../db/rules.js';
+import { listTopicsByTenant } from '../db/telegram-topics.js';
+import {
+  bindTenantForum,
+  getTenantTelegram,
+  setTenantTelegramAdmins,
+  unbindTenantForum,
+} from '../db/tenant-telegram.js';
 import { MAX_QR_SENDS, startQrLogin, stopQrLogin } from '../personal/login-qr.js';
 import { sessionManager } from '../personal/manager.js';
 import { detectSimpleCycles } from '../relay/match.js';
+import { verifyTelegramConfig, verifyTelegramForum } from '../telegram/client.js';
+import {
+  updateRuleWithTelegram,
+  upsertRuleWithTelegram,
+} from '../telegram/resolve-targets.js';
+import { isTelegramDest } from '../telegram/dest.js';
 import type { ZaloBotControl, BotInbound } from './adapter.js';
 import { handleAdminCommand } from './admin.js';
 import {
@@ -37,9 +52,12 @@ import {
   parseAddRuleCommand,
   parseSetRuleArgs,
 } from './parse-addrule.js';
+import { ADDTG_USAGE, parseAddTgCommand } from './parse-addtg.js';
 
 async function ensureGroupNames(tenantId: number, groupIds: string[]): Promise<void> {
-  const missing = groupIds.filter((id) => !getGroupName(tenantId, id));
+  const missing = groupIds.filter(
+    (id) => !isTelegramDest(id) && !getGroupName(tenantId, id),
+  );
   if (missing.length === 0) return;
   if (!sessionManager.isRunning(tenantId)) return;
   try {
@@ -179,6 +197,14 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
       await bot.sendText(zaloUserId, ADD_RULE_HELP);
       return;
     }
+    if (topic === 'addtg' || topic === 'tg' || topic === 'telegram') {
+      await bot.sendText(
+        zaloUserId,
+        ADDTG_USAGE +
+          `\n\nGắn forum riêng:\n/tgbind <forum_id>\n/tgadmins <id1,id2>\n/tgunbind\n/tgstatus`,
+      );
+      return;
+    }
     let help = USER_HELP;
     if (isAdmin(zaloUserId)) help += `\n\n${ADMIN_HELP}`;
     await bot.sendText(zaloUserId, help);
@@ -199,6 +225,8 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     }
     const session = getSession(tenant.id);
     const rules = listRules(tenant.id);
+    const tgTopics = listTopicsByTenant(tenant.id);
+    const tgCfg = getTenantTelegram(tenant.id);
     await bot.sendText(
       zaloUserId,
       [
@@ -209,6 +237,9 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
         `Zalo own id: ${session?.zaloOwnId ?? '-'}`,
         `Listener: ${sessionManager.isRunning(tenant.id) ? 'running' : 'stopped'}`,
         `Số luật: ${rules.length}`,
+        `TG bot: ${isTelegramEnabled() ? 'ON' : 'OFF (thiếu TELEGRAM_BOT_TOKEN)'}`,
+        `TG forum: ${tgCfg?.forumGroupId ?? '(chưa /tgbind)'}`,
+        `TG topics: ${tgTopics.length}`,
         session?.lastError ? `Lỗi: ${session.lastError}` : null,
       ]
         .filter(Boolean)
@@ -226,6 +257,14 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     text === '/groups' ||
     text === '/addrule' ||
     text.startsWith('/addrule ') ||
+    text === '/addtg' ||
+    text.startsWith('/addtg ') ||
+    text === '/tgstatus' ||
+    text === '/tgbind' ||
+    text.startsWith('/tgbind ') ||
+    text === '/tgunbind' ||
+    text === '/tgadmins' ||
+    text.startsWith('/tgadmins ') ||
     text === '/rules' ||
     text.startsWith('/rules ') ||
     text === '/keywords' ||
@@ -409,6 +448,198 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     return;
   }
 
+  if (text === '/tgbind' || text.startsWith('/tgbind ')) {
+    if (!isTelegramEnabled()) {
+      await bot.sendText(
+        zaloUserId,
+        'Server chưa có TELEGRAM_BOT_TOKEN — liên hệ admin.',
+      );
+      return;
+    }
+    const forumId = text.replace(/^\/tgbind\s*/i, '').trim();
+    if (!forumId) {
+      await bot.sendText(
+        zaloUserId,
+        'Format: /tgbind <forum_group_id>\n' +
+          '1) Add bot Telegram vào forum (bật Topics, quyền Manage topics)\n' +
+          '2) Trong forum gửi /id → copy chat.id (-100…)\n' +
+          '3) /tgbind -100…\n' +
+          '4) /tgadmins <telegram_user_id,...> (người được lệnh trong forum)',
+      );
+      return;
+    }
+    try {
+      const check = await verifyTelegramForum(forumId);
+      if (!check.ok) {
+        await bot.sendText(
+          zaloUserId,
+          `Không gắn được forum:\n${check.error}\n` +
+            'Bot phải là admin + forum phải bật Topics.',
+        );
+        return;
+      }
+      const existing = getTenantTelegram(tenant.id);
+      const cfg = bindTenantForum({
+        tenantId: tenant.id,
+        forumGroupId: forumId,
+        adminIds: existing?.adminIds,
+      });
+      await bot.sendText(
+        zaloUserId,
+        `Đã gắn forum${check.title ? ` «${check.title}»` : ''}\n` +
+          `id=${cfg.forumGroupId}\n` +
+          `bot=@${check.botUsername ?? '?'}\n` +
+          (cfg.adminIds.length
+            ? `TG admins: ${cfg.adminIds.join(', ')}\n`
+            : 'Chưa có TG admin tenant — /tgadmins <id,...>\n') +
+          'Tiếp: /addtg <group_zalo> all\n' +
+          'hoặc trong forum Telegram: /useradd <group_zalo>',
+      );
+    } catch (err) {
+      await bot.sendText(
+        zaloUserId,
+        `Lỗi: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return;
+  }
+
+  if (text === '/tgunbind') {
+    const ok = unbindTenantForum(tenant.id);
+    await bot.sendText(
+      zaloUserId,
+      ok
+        ? 'Đã gỡ gắn forum (topics/map cũ vẫn trong DB — /rules kiểm tra).'
+        : 'Chưa gắn forum nào.',
+    );
+    return;
+  }
+
+  if (text === '/tgadmins' || text.startsWith('/tgadmins ')) {
+    const cfg = getTenantTelegram(tenant.id);
+    if (!cfg) {
+      await bot.sendText(zaloUserId, 'Chưa /tgbind forum.');
+      return;
+    }
+    const raw = text.replace(/^\/tgadmins\s*/i, '').trim();
+    if (!raw) {
+      await bot.sendText(
+        zaloUserId,
+        `TG admins hiện tại: ${cfg.adminIds.join(', ') || '(trống)'}\n` +
+          'Set: /tgadmins 111,222\n' +
+          '(user id Telegram — chat bot rồi /id)',
+      );
+      return;
+    }
+    const ids = parseIdList(raw);
+    const updated = setTenantTelegramAdmins(tenant.id, ids);
+    await bot.sendText(
+      zaloUserId,
+      `Đã cập nhật TG admins: ${updated?.adminIds.join(', ') || '(trống)'}`,
+    );
+    return;
+  }
+
+  if (text === '/tgstatus') {
+    if (!isTelegramEnabled()) {
+      await bot.sendText(
+        zaloUserId,
+        'Telegram chưa bật trên server (thiếu TELEGRAM_BOT_TOKEN).',
+      );
+      return;
+    }
+    const botCheck = await verifyTelegramConfig();
+    const cfg = getTenantTelegram(tenant.id);
+    const topics = listTopicsByTenant(tenant.id);
+    let forumLine = 'Forum: (chưa /tgbind)';
+    if (cfg) {
+      const f = await verifyTelegramForum(cfg.forumGroupId);
+      forumLine = f.ok
+        ? `Forum OK: ${cfg.forumGroupId}${f.title ? ` «${f.title}»` : ''}`
+        : `Forum lỗi ${cfg.forumGroupId}: ${f.error}`;
+    }
+    await bot.sendText(
+      zaloUserId,
+      [
+        botCheck.ok
+          ? `Bot OK (@${botCheck.botUsername ?? '?'})`
+          : `Bot lỗi: ${botCheck.error}`,
+        forumLine,
+        cfg
+          ? `TG admins: ${cfg.adminIds.join(', ') || '(trống — dùng TELEGRAM_ADMIN_IDS global nếu có)'}`
+          : null,
+        `Topics: ${topics.length}`,
+        ...topics.slice(0, 10).map(
+          (t) =>
+            `· #${t.telegramTopicId} ← ${t.sourceGroupId}` +
+            (t.topicTitle ? ` (${t.topicTitle})` : ''),
+        ),
+        topics.length > 10 ? `… +${topics.length - 10} nữa` : null,
+        'Gắn forum: /tgbind <id> · Tạo topic: /addtg … hoặc Telegram /useradd',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+    return;
+  }
+
+  if (text === '/addtg' || text.startsWith('/addtg ')) {
+    const session = getSession(tenant.id);
+    if (session?.status !== 'active') {
+      await bot.sendText(zaloUserId, 'Cần /login trước.\nXem /help addtg');
+      return;
+    }
+    if (!isTelegramEnabled()) {
+      await bot.sendText(
+        zaloUserId,
+        'Telegram chưa cấu hình trên server (TELEGRAM_BOT_TOKEN).',
+      );
+      return;
+    }
+    if (!getTenantTelegram(tenant.id)) {
+      await bot.sendText(
+        zaloUserId,
+        'Chưa gắn forum. /tgbind <forum_group_id>\nXem /tgstatus',
+      );
+      return;
+    }
+    const parsed = parseAddTgCommand(text);
+    if ('error' in parsed) {
+      await bot.sendText(zaloUserId, parsed.error);
+      return;
+    }
+    try {
+      await ensureGroupNames(tenant.id, [parsed.sourceGroupId]);
+      const { rule, created, tgDest } = await upsertRuleWithTelegram({
+        tenantId: tenant.id,
+        sourceGroupId: parsed.sourceGroupId,
+        zaloTargets: [],
+        wantsTelegram: true,
+        filterMode: parsed.filterMode,
+        keywords: parsed.keywords,
+        inboundOnly: parsed.inboundOnly,
+        mergeExistingZalo: true,
+      });
+      const sourceLabel = formatGroupLabel(tenant.id, rule.sourceGroupId);
+      const targetLabels = formatGroupList(tenant.id, rule.targets);
+      await bot.sendText(
+        zaloUserId,
+        `${created ? 'Đã tạo' : 'Đã cập nhật'} luật #${rule.id}\n` +
+          `${sourceLabel}\n→ ${targetLabels}\n` +
+          `Lọc: ${rule.filterMode}` +
+          (rule.filterMode === 'keywords' ? ` [${rule.keywords.join(', ')}]` : '') +
+          `\nTopic: ${tgDest ?? '—'}` +
+          (parsed.inboundOnly ? '\n(readonly — không reply topic→Zalo)' : ''),
+      );
+    } catch (err) {
+      await bot.sendText(
+        zaloUserId,
+        `Lỗi: ${err instanceof Error ? err.message : String(err)}\n\n${ADDTG_USAGE}`,
+      );
+    }
+    return;
+  }
+
   if (text === '/addrule' || text.startsWith('/addrule ')) {
     const session = getSession(tenant.id);
     if (session?.status !== 'active') {
@@ -420,14 +651,27 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
       await bot.sendText(zaloUserId, parsed.error);
       return;
     }
+    if (parsed.wantsTelegram && !isTelegramEnabled()) {
+      await bot.sendText(
+        zaloUserId,
+        'Token tg cần TELEGRAM_BOT_TOKEN trên server.',
+      );
+      return;
+    }
+    if (parsed.wantsTelegram && !getTenantTelegram(tenant.id)) {
+      await bot.sendText(zaloUserId, 'Chưa gắn forum. /tgbind <forum_id>');
+      return;
+    }
     try {
       await ensureGroupNames(tenant.id, [parsed.sourceGroupId, ...parsed.targets]);
-      const { rule, created, removedIds } = upsertRuleBySource({
+      const { rule, created, removedIds } = await upsertRuleWithTelegram({
         tenantId: tenant.id,
         sourceGroupId: parsed.sourceGroupId,
-        targets: parsed.targets,
+        zaloTargets: parsed.targets,
+        wantsTelegram: parsed.wantsTelegram,
         filterMode: parsed.filterMode,
         keywords: parsed.keywords,
+        mergeExistingZalo: false,
       });
       const cycles = detectSimpleCycles(
         listRules(tenant.id).map((r) => ({
@@ -500,13 +744,28 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
         await bot.sendText(zaloUserId, 'Không tìm thấy luật.');
         return;
       }
+      if (parsed.wantsTelegram && !isTelegramEnabled()) {
+        await bot.sendText(
+          zaloUserId,
+          'Token tg cần TELEGRAM_BOT_TOKEN trên server.',
+        );
+        return;
+      }
+      if (parsed.wantsTelegram && !getTenantTelegram(tenant.id)) {
+        await bot.sendText(zaloUserId, 'Chưa gắn forum. /tgbind <forum_id>');
+        return;
+      }
       try {
         await ensureGroupNames(tenant.id, [
           existing.sourceGroupId,
           ...parsed.targets,
         ]);
-        const updated = updateRule(parsed.ruleId, {
-          targets: parsed.targets,
+        const updated = await updateRuleWithTelegram({
+          ruleId: parsed.ruleId,
+          tenantId: tenant.id,
+          sourceGroupId: existing.sourceGroupId,
+          zaloTargets: parsed.targets,
+          wantsTelegram: parsed.wantsTelegram,
           filterMode: parsed.filterMode,
           keywords: parsed.keywords,
         });

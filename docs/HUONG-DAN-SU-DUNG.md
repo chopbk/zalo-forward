@@ -1,6 +1,6 @@
 # Hướng dẫn sử dụng — Zalo Message Forward
 
-Bot chuyển tiếp tin nhắn từ **group Zalo nguồn** sang **một hoặc nhiều group đích**. Bạn cấu hình bằng cách chat với bot trên Zalo (Zalo Bot Platform).
+Bot chuyển tiếp tin nhắn từ **group Zalo nguồn** sang **một hoặc nhiều group Zalo đích** và/hoặc **Telegram forum topic**. Bạn cấu hình bằng cách chat với bot trên Zalo (Zalo Bot Platform).
 
 > **Lưu ý:** Nick Zalo dùng để `/login` (data plane) là automation không chính thức — nên dùng **nick phụ**, không mở Zalo Web cùng lúc với listener.
 
@@ -12,11 +12,13 @@ Bot chuyển tiếp tin nhắn từ **group Zalo nguồn** sang **một hoặc n
 /start          → đăng ký, chờ admin duyệt
 /login          → quét QR nick Zalo (phụ)
 /groups         → lấy id group
-/addrule ...    → tạo luật chuyển tiếp
+/addrule ...    → luật Zalo→Zalo (hoặc + tg)
+/addtg ...      → tạo topic Telegram + gắn luật
 /rules          → kiểm tra luật
+/tgstatus       → kiểm tra bridge Telegram
 ```
 
-Sau đó tin trong group nguồn (đúng luật) sẽ được chuyển sang group đích.
+Sau đó tin trong group nguồn (đúng luật) sẽ được chuyển sang đích đã cấu hình.
 
 ---
 
@@ -85,6 +87,23 @@ Sau đó tin trong group nguồn (đúng luật) sẽ được chuyển sang gro
 - Muốn thêm đích C vào nguồn A đã có đích B: `/addrule A B,C all`
 - Nhiều nguồn khác nhau → gọi `/addrule` nhiều lần (mỗi nguồn một luật).
 - Tránh vòng A→B và B→A (bot sẽ cảnh báo).
+
+#### Telegram — mỗi user một forum riêng
+
+```
+/tgbind <forum_id>          # gắn forum (Topics) của bạn
+/tgadmins <id1,id2>         # ai được lệnh / reply trong forum
+/tgstatus
+/addtg <id_nguồn> all
+/addtg <id_nguồn> all readonly
+```
+
+1. Add bot Telegram vào forum (bật Topics, quyền Manage topics)
+2. Trong forum gửi `/id` → copy `chat.id` (`-100…`)
+3. `/tgbind -100…` → `/tgadmins <telegram_user_id>`
+4. `/addtg <group_zalo> all` **hoặc** trong forum: `/useradd <group_zalo>`
+
+Trong forum (user ∈ tgadmins): `/users`, `/useradd`, `/userdel`, `/tginfo`, `/recreate`, `/readonly`, `/twoway`, `/zalochats`, reply topic → Zalo.
 
 #### `/rules` — xem / sửa / bật / tắt / xóa
 

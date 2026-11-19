@@ -27,6 +27,9 @@ import {
 import { sessionManager } from '../personal/manager.js';
 import { reformatSignalMessage } from './reformat-signal.js';
 import { parseSignalMeta, type SignalMeta } from './signal-meta.js';
+import { isTelegramDest, parseTelegramDest } from '../telegram/dest.js';
+import { sendPayloadToTelegramTopic } from '../telegram/send.js';
+import { findTopicById } from '../db/telegram-topics.js';
 
 let drainTimer: ReturnType<typeof setInterval> | null = null;
 let draining = false;
@@ -109,9 +112,16 @@ export async function handleGroupInbound(
           }
         : undefined;
 
+    const topicId = parseTelegramDest(destGroupId);
+    const isTg = topicId != null;
+    const topic = isTg ? findTopicById(topicId) : null;
+
     return {
       sourceGroupId: msg.groupId,
       destGroupId,
+      destType: isTg ? ('telegram' as const) : ('zalo' as const),
+      telegramTopicId: topicId ?? undefined,
+      telegramChatId: topic?.telegramChatId,
       text: body.text,
       rawText: msg.text ?? '',
       reformatted: body.reformatted,
@@ -120,10 +130,10 @@ export async function handleGroupInbound(
       mentions: body.mentions,
       sourceMessageId: msg.messageId,
       sourceTs: msg.ts,
-      preferNativeForward,
+      preferNativeForward: isTg ? false : preferNativeForward,
       senderName: msg.senderName,
-      signalQuote,
-      signalStore,
+      signalQuote: isTg ? undefined : signalQuote,
+      signalStore: isTg ? undefined : signalStore,
       signalMeta: signal,
     };
   });
@@ -219,12 +229,6 @@ async function processOneJob(): Promise<boolean> {
   const job = claimNextJob();
   if (!job) return false;
 
-  const adapter = sessionManager.getAdapter(job.tenantId);
-  if (!adapter) {
-    markJobFailedOrRetry(job.id, 'Session not running');
-    return true;
-  }
-
   const tenant = findTenantById(job.tenantId);
   const session = getSession(job.tenantId);
   if (!tenant || !canRelay(tenant, session)) {
@@ -234,6 +238,34 @@ async function processOneJob(): Promise<boolean> {
 
   try {
     const { payload } = job;
+    const destType =
+      payload.destType ??
+      (isTelegramDest(payload.destGroupId) ? 'telegram' : 'zalo');
+
+    if (destType === 'telegram') {
+      const topicId =
+        payload.telegramTopicId ?? parseTelegramDest(payload.destGroupId);
+      if (!topicId) {
+        throw new Error(`Invalid telegram dest: ${payload.destGroupId}`);
+      }
+      await sendPayloadToTelegramTopic({
+        topicId,
+        chatId: payload.telegramChatId,
+        text: payload.text,
+        styles: payload.styles,
+        images: payload.images,
+        senderName: payload.senderName,
+      });
+      markJobDone(job.id);
+      return true;
+    }
+
+    const adapter = sessionManager.getAdapter(job.tenantId);
+    if (!adapter) {
+      markJobFailedOrRetry(job.id, 'Session not running');
+      return true;
+    }
+
     if (payload.images && payload.images.length > 0) {
       await adapter.sendImages(
         payload.destGroupId,

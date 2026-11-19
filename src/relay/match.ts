@@ -1,5 +1,6 @@
 import type { ForwardRule } from '../db/rules.js';
 import { ruleMatchesContent } from '../db/rules.js';
+import { isTelegramDest } from '../telegram/dest.js';
 
 export type MatchResult = {
   rule: ForwardRule;
@@ -27,7 +28,7 @@ export function resolveDestinations(
   return results;
 }
 
-/** Phát hiện chu trình đơn giản A→B và B→A trong danh sách rule của tenant */
+/** Phát hiện chu trình đơn giản A→B và B→A (bỏ qua dest Telegram). */
 export function detectSimpleCycles(
   rules: Array<{ sourceGroupId: string; targets: string[] }>,
 ): string[] {
@@ -36,6 +37,7 @@ export function detectSimpleCycles(
   for (const r of rules) {
     if (!edges.has(r.sourceGroupId)) edges.set(r.sourceGroupId, new Set());
     for (const t of r.targets) {
+      if (isTelegramDest(t)) continue;
       edges.get(r.sourceGroupId)!.add(t);
     }
   }
