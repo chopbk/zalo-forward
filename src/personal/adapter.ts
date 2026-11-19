@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { ThreadType, type API, type ZaloListenerMessage } from 'zca-js';
 import { getEnv } from '../config/env.js';
 import logger from '../config/logger.js';
-import { getGroupActivityMap } from '../db/rules.js';
+import { getGroupActivityMap, listGroupCache } from '../db/rules.js';
 import { SendQueue } from '../relay/queue.js';
 import {
   parseGroupMessage,
@@ -238,11 +238,45 @@ export class PersonalAccountAdapter {
   async listGroups(): Promise<
     Array<{ groupId: string; name: string; lastActiveAt?: number; pinned?: boolean }>
   > {
-    const all = await this.api.getAllGroups();
-    const ids = Object.keys(all.gridVerMap ?? {});
-    if (ids.length === 0) return [];
-    const info = await this.api.getGroupInfo(ids);
-    const map = info.gridInfoMap ?? {};
+    let ids: string[] = [];
+    try {
+      const all = await this.api.getAllGroups();
+      ids = Object.keys(all.gridVerMap ?? {});
+    } catch (err) {
+      // Một số nick (mới login / API getlg/v4) trả 114 "Tham số không hợp lệ"
+      logger.warn(
+        { err, tenantId: this.tenantId },
+        'getAllGroups failed — fallback groups_cache',
+      );
+      return listGroupCache(this.tenantId).map((g) => ({
+        groupId: g.groupId,
+        name: g.name ?? g.groupId,
+        lastActiveAt: g.lastSeenAt > 0 ? g.lastSeenAt : undefined,
+      }));
+    }
+    if (ids.length === 0) {
+      return listGroupCache(this.tenantId).map((g) => ({
+        groupId: g.groupId,
+        name: g.name ?? g.groupId,
+        lastActiveAt: g.lastSeenAt > 0 ? g.lastSeenAt : undefined,
+      }));
+    }
+
+    // getGroupInfo dễ 114 nếu gửi quá nhiều id một lần
+    const map: Record<string, { name?: string }> = {};
+    const chunkSize = 50;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      try {
+        const info = await this.api.getGroupInfo(chunk);
+        Object.assign(map, info.gridInfoMap ?? {});
+      } catch (err) {
+        logger.warn(
+          { err, tenantId: this.tenantId, chunk: chunk.length },
+          'getGroupInfo chunk failed',
+        );
+      }
+    }
 
     // Unread + probe là nguồn chính cho thứ tự. Cache chỉ là fallback khi thiếu.
     const cached = getGroupActivityMap(this.tenantId);

@@ -315,11 +315,28 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
         try {
           const fresh = findTenantByBotUserId(zaloUserId)!;
           await sessionManager.startTenant(fresh, path);
-          const groups = await sessionManager.refreshGroups(fresh.id);
-          await bot.sendText(
-            zaloUserId,
-            `Sẵn sàng. Có ${groups.length} group.\nGõ /groups rồi /addrule.`,
-          );
+          if (!sessionManager.getAdapter(fresh.id)) {
+            throw new Error('Listener không giữ được kết nối WS — thử /login lại');
+          }
+          try {
+            const groups = await sessionManager.refreshGroups(fresh.id);
+            await bot.sendText(
+              zaloUserId,
+              `Sẵn sàng. Có ${groups.length} group.\nGõ /groups rồi /addrule.`,
+            );
+          } catch (syncErr) {
+            // Listener đã chạy — lỗi getAllGroups (114) không được coi là fail login
+            logger.warn(
+              { err: syncErr, tenantId: tenant.id },
+              'refreshGroups after login failed (listener vẫn chạy)',
+            );
+            await bot.sendText(
+              zaloUserId,
+              `Sẵn sàng (listener đang chạy).\n` +
+                `Đồng bộ danh sách group lỗi tạm: ${syncErr instanceof Error ? syncErr.message : syncErr}\n` +
+                `Gõ /groups thử lại, hoặc dùng id group đã biết với /addrule.`,
+            );
+          }
         } catch (err) {
           upsertSession(tenant.id, {
             status: 'error',
