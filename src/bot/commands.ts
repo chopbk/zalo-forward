@@ -255,9 +255,13 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     text === '/stop' ||
     text === '/logout' ||
     text === '/groups' ||
+    text === '/zalogroups' ||
     text === '/friends' ||
+    text === '/zalofriends' ||
     text === '/chats' ||
     text.startsWith('/chats ') ||
+    text === '/zalochats' ||
+    text.startsWith('/zalochats ') ||
     text === '/addrule' ||
     text.startsWith('/addrule ') ||
     text === '/addtg' ||
@@ -410,79 +414,67 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
     return;
   }
 
-  if (text === '/groups') {
+  // Alias giống tg-zalo: /zalochats, /zalogroups, /zalofriends
+  if (
+    text === '/groups' ||
+    text === '/zalogroups' ||
+    text === '/friends' ||
+    text === '/zalofriends' ||
+    text === '/chats' ||
+    text.startsWith('/chats ') ||
+    text === '/zalochats' ||
+    text.startsWith('/zalochats ')
+  ) {
     const session = getSession(tenant.id);
     if (session?.status !== 'active') {
       await bot.sendText(zaloUserId, 'Chưa login. Gõ /login');
       return;
     }
-    try {
-      let groups: Array<{ groupId: string; name: string | null }> = [];
-      if (sessionManager.isRunning(tenant.id)) {
-        try {
-          // listGroups: ghim trước, rồi tin gần đây nhất (unread + cache + probe)
-          const live = await sessionManager.refreshGroups(tenant.id);
-          groups = live.map((g) => ({ groupId: g.groupId, name: g.name }));
-        } catch {
-          groups = listGroupCache(tenant.id);
-        }
-      } else {
-        groups = listGroupCache(tenant.id);
-      }
-      if (groups.length === 0) {
-        await bot.sendText(zaloUserId, 'Không thấy group nào. Nick có trong group chưa?');
-        return;
-      }
-      const lines = [
-        'Group (ghim → tin gần đây nhất):',
-        ...groups.map((g, i) => `${i + 1}. ${g.name ?? '?'} — id=${g.groupId}`),
-        '',
-        'Chat 1-1: /friends · tất cả: /chats',
-      ];
-      // chunk if long
-      const chunkSize = 30;
-      for (let i = 0; i < lines.length; i += chunkSize) {
-        await bot.sendText(zaloUserId, lines.slice(i, i + chunkSize).join('\n'));
-      }
-    } catch (err) {
+
+    const cmd = text.split(/\s+/)[0]!.toLowerCase();
+    const arg = text.replace(/^\/\S+\s*/, '').trim().toLowerCase();
+
+    let filter: 'user' | 'group' | 'all';
+    if (
+      cmd === '/groups' ||
+      cmd === '/zalogroups' ||
+      arg === 'group' ||
+      arg === 'groups'
+    ) {
+      filter = 'group';
+    } else if (
+      cmd === '/friends' ||
+      cmd === '/zalofriends' ||
+      arg === 'user' ||
+      arg === 'users' ||
+      arg === '1-1'
+    ) {
+      filter = 'user';
+    } else if (arg && arg !== 'all') {
       await bot.sendText(
         zaloUserId,
-        `Lỗi /groups: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    return;
-  }
-
-  if (text === '/friends' || text === '/chats' || text.startsWith('/chats ')) {
-    const session = getSession(tenant.id);
-    if (session?.status !== 'active') {
-      await bot.sendText(zaloUserId, 'Chưa login. Gõ /login');
-      return;
-    }
-    if (!sessionManager.isRunning(tenant.id)) {
-      await bot.sendText(zaloUserId, 'Listener chưa chạy. /login hoặc /resume');
-      return;
-    }
-
-    const filter =
-      text === '/friends'
-        ? 'user'
-        : (text.replace(/^\/chats\s*/i, '').trim().toLowerCase() || 'all');
-    const wantUser = filter === 'all' || filter === 'user' || filter === 'users' || filter === '1-1';
-    const wantGroup =
-      filter === 'all' || filter === 'group' || filter === 'groups';
-
-    if (!wantUser && !wantGroup) {
-      await bot.sendText(
-        zaloUserId,
-        'Format:\n/friends — chat 1-1 (user id)\n/chats — tất cả\n/chats user | /chats group',
+        'Format (giống tg-zalo):\n' +
+          '/zalochats — tất cả\n' +
+          '/zalochats user | /zalochats group\n' +
+          '/zalogroups — chỉ group\n' +
+          '/zalofriends — chỉ chat 1-1',
       );
       return;
+    } else {
+      filter = 'all';
     }
+
+    const wantUser = filter === 'all' || filter === 'user';
+    const wantGroup = filter === 'all' || filter === 'group';
 
     try {
       const lines: string[] = [];
+
       if (wantUser) {
+        if (!sessionManager.isRunning(tenant.id)) {
+          await bot.sendText(zaloUserId, 'Listener chưa chạy. /login hoặc /resume');
+          return;
+        }
         const friends = await sessionManager.refreshFriends(tenant.id);
         if (friends.length === 0) {
           lines.push('Chat 1-1: (trống)');
@@ -494,19 +486,37 @@ async function handleInbound(bot: ZaloBotControl, msg: BotInbound): Promise<void
           }
         }
       }
+
       if (wantGroup) {
         if (lines.length) lines.push('');
-        const groups = await sessionManager.refreshGroups(tenant.id);
-        if (groups.length === 0) {
-          lines.push('Group: (trống)');
+        let groups: Array<{ groupId: string; name: string | null }> = [];
+        if (sessionManager.isRunning(tenant.id)) {
+          try {
+            const live = await sessionManager.refreshGroups(tenant.id);
+            groups = live.map((g) => ({ groupId: g.groupId, name: g.name }));
+          } catch {
+            groups = listGroupCache(tenant.id);
+          }
         } else {
-          lines.push('Group:');
+          groups = listGroupCache(tenant.id);
+        }
+        if (groups.length === 0) {
+          lines.push('Group: (trống — nick đã vào group chưa?)');
+        } else {
+          lines.push('Group (ghim → tin gần đây):');
           for (let i = 0; i < groups.length; i++) {
             const g = groups[i]!;
-            lines.push(`${i + 1}. ${g.name} — id=${g.groupId}`);
+            lines.push(`${i + 1}. ${g.name ?? '?'} — id=${g.groupId}`);
           }
         }
       }
+
+      if (filter === 'group') {
+        lines.push('', 'Chat 1-1: /zalofriends · tất cả: /zalochats');
+      } else if (filter === 'user') {
+        lines.push('', 'Group: /zalogroups · tất cả: /zalochats');
+      }
+
       const chunkSize = 30;
       for (let i = 0; i < lines.length; i += chunkSize) {
         await bot.sendText(zaloUserId, lines.slice(i, i + chunkSize).join('\n'));

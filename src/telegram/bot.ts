@@ -98,7 +98,8 @@ function wireHandlers(bot: Bot): void {
     '/tginfo — chi tiết topic hiện tại',
     '/recreate — tạo lại topic bị xóa',
     '/readonly | /twoway — một chiều / hai chiều',
-    '/zalochats — group Zalo gần đây (cần session)',
+    '/zalochats [user|group] — chat Zalo gần đây',
+    '/zalogroups · /zalofriends — chỉ group / chỉ 1-1',
     '',
     'Reply text/ảnh trong topic → gửi group Zalo (nếu twoway).',
     'Gắn forum: trên Zalo bot dùng /tgbind <forum_id>',
@@ -348,7 +349,9 @@ function wireHandlers(bot: Bot): void {
     await setTopicMode(ctx, false);
   });
 
-  bot.command(['zalochats', 'zalo_chats', 'groups', 'friends', 'zalofriends'], async (ctx) => {
+  bot.command(
+    ['zalochats', 'zalo_chats', 'zalogroups', 'zalo_groups', 'groups', 'friends', 'zalofriends'],
+    async (ctx) => {
     const forum = requireForumAdmin(ctx);
     if (!forum) return;
     if (!sessionManager.isRunning(forum.cfg.tenantId)) {
@@ -363,10 +366,15 @@ function wireHandlers(bot: Bot): void {
       arg === 'user' ||
       arg === 'users' ||
       arg === '1-1';
-    const focusGroupsOnly = arg === 'group' || arg === 'groups';
+    const focusGroupsOnly =
+      cmd === 'zalogroups' ||
+      cmd === 'zalo_groups' ||
+      cmd === 'groups' ||
+      arg === 'group' ||
+      arg === 'groups';
     try {
       const lines: string[] = [];
-      if (focusFriends || (!focusGroupsOnly && cmd !== 'groups')) {
+      if (!focusGroupsOnly) {
         const friends = await sessionManager.refreshFriends(forum.cfg.tenantId);
         lines.push('Chat 1-1:');
         if (friends.length === 0) lines.push('(trống)');
@@ -391,7 +399,8 @@ function wireHandlers(bot: Bot): void {
     } catch (err) {
       await ctx.reply(`Lỗi: ${err instanceof Error ? err.message : String(err)}`);
     }
-  });
+  },
+  );
 
   bot.on('message:text', async (ctx) => {
     const forum = requireForumAdmin(ctx);

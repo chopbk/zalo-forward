@@ -4,7 +4,7 @@ Setup:
 1) /start — đăng ký (chờ admin duyệt)
 2) /login — quét QR nick Zalo (nên nick phụ)
    /stop — tạm dừng login QR đang chờ quét
-3) /groups — id group · /friends — id chat 1-1 · /chats — cả hai
+3) /zalochats · /zalogroups · /zalofriends (alias /groups /friends /chats)
 4) /addrule ... — Zalo→Zalo
 5) Telegram (mỗi tenant 1 forum):
    /tgbind <forum_id> → /tgadmins <tg_user_id,...>
@@ -22,7 +22,7 @@ Setup:
 Chi tiết: /help addrule · /help addtg
 
 Lệnh khác:
-/status · /groups · /friends · /chats [user|group]
+/status · /zalochats [user|group] · /zalogroups · /zalofriends
 /tgstatus · /tgbind · /tgadmins · /tgunbind
 /rules set <id> <đích,...> all
 /rules on|off|del <id>
