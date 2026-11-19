@@ -11,6 +11,7 @@ import { deleteSessionFile } from './session.js';
 import { loginWithSession } from './session.js';
 import { PersonalAccountAdapter } from './adapter.js';
 import type { NormalizedGroupMessage } from '../relay/normalize.js';
+import { wireZaloUndoSync } from '../telegram/sync.js';
 
 export type RelayInboundHandler = (
   tenant: Tenant,
@@ -71,6 +72,7 @@ export class SessionManager {
       if (!this.inboundHandler) return;
       await this.inboundHandler(tenant, msg);
     });
+    wireZaloUndoSync(adapter);
     adapter.onClosed((code, reason) => {
       logger.error(
         { tenantId: tenant.id, code, reason },

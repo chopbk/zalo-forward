@@ -5,6 +5,10 @@ import {
   findTopicById,
 } from '../db/telegram-topics.js';
 import { canRelay, findTenantById, getSession } from '../db/tenants.js';
+import {
+  findMessageLinkByTelegram,
+  upsertMessageLink,
+} from '../db/message-links.js';
 import { sessionManager } from '../personal/manager.js';
 import {
   telegramEntitiesToZaloStyles,
@@ -14,7 +18,7 @@ import { downloadUrlToBuffer } from './media.js';
 import { getTelegramApi } from './client.js';
 
 /**
- * Luồng B: admin nhắn trong topic → group Zalo nguồn.
+ * Luồng B: admin nhắn trong topic → group/user Zalo nguồn.
  */
 export async function forwardTopicReplyToZalo(input: {
   topicId: number;
@@ -23,6 +27,9 @@ export async function forwardTopicReplyToZalo(input: {
   photoFileIds?: string[];
   caption?: string;
   captionEntities?: TelegramEntityLike[];
+  telegramMessageId?: number;
+  /** Reply vào tin TG đã bridge → quote tin Zalo tương ứng */
+  replyToTelegramMessageId?: number;
 }): Promise<void> {
   const topic = findTopicById(input.topicId);
   if (!topic) {
@@ -48,6 +55,27 @@ export async function forwardTopicReplyToZalo(input: {
     throw new Error(`Session tenant #${topic.tenantId} chưa chạy`);
   }
 
+  let quote: import('zca-js').SendMessageQuote | undefined;
+  if (input.replyToTelegramMessageId != null) {
+    const link = findMessageLinkByTelegram(
+      topic.tenantId,
+      topic.telegramChatId,
+      input.replyToTelegramMessageId,
+    );
+    if (link?.zaloMsgId && link.zaloCliMsgId) {
+      quote = {
+        content: link.bodyText ?? '',
+        msgType: 'webchat',
+        propertyExt: { type: 0, color: 0, size: 0, subType: 0, ext: '{}' },
+        uidFrom: link.zaloUidFrom ?? '',
+        msgId: link.zaloMsgId,
+        cliMsgId: link.zaloCliMsgId,
+        ts: String(Date.now()),
+        ttl: 0,
+      };
+    }
+  }
+
   if (input.photoFileIds && input.photoFileIds.length > 0) {
     const api = getTelegramApi();
     const token = getEnv().TELEGRAM_BOT_TOKEN;
@@ -57,16 +85,35 @@ export async function forwardTopicReplyToZalo(input: {
       const file = await api.getFile(fileId);
       if (!file.file_path) continue;
       const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-      // Probe tải được trước khi giao URL cho zca-js
       await downloadUrlToBuffer(url);
       images.push({ url });
     }
     if (images.length === 0) {
       throw new Error('Không lấy được file ảnh từ Telegram');
     }
-    await adapter.sendImages(topic.sourceGroupId, images, input.caption ?? '', {
-      threadKind: topic.threadKind,
-    });
+    const result = await adapter.sendImages(
+      topic.sourceGroupId,
+      images,
+      input.caption ?? '',
+      { threadKind: topic.threadKind },
+    );
+    if (input.telegramMessageId != null && result.messageId) {
+      try {
+        upsertMessageLink({
+          tenantId: topic.tenantId,
+          direction: 't2z',
+          zaloMsgId: result.messageId,
+          zaloThreadId: topic.sourceGroupId,
+          threadKind: topic.threadKind,
+          telegramChatId: topic.telegramChatId,
+          telegramMessageId: input.telegramMessageId,
+          telegramTopicId: topic.telegramTopicId,
+          bodyText: input.caption ?? '[image]',
+        });
+      } catch (err) {
+        logger.warn({ err }, 'upsertMessageLink t2z photo failed');
+      }
+    }
     logger.info(
       {
         topicId: input.topicId,
@@ -83,15 +130,37 @@ export async function forwardTopicReplyToZalo(input: {
   if (!text) return;
 
   const styles = telegramEntitiesToZaloStyles(text, input.entities);
-  await adapter.sendText(topic.sourceGroupId, text, {
+  const result = await adapter.sendText(topic.sourceGroupId, text, {
     styles: styles.length ? styles : undefined,
     threadKind: topic.threadKind,
+    quote,
   });
+
+  if (input.telegramMessageId != null && result.messageId) {
+    try {
+      upsertMessageLink({
+        tenantId: topic.tenantId,
+        direction: 't2z',
+        zaloMsgId: result.messageId,
+        zaloCliMsgId: result.cliMsgId,
+        zaloThreadId: topic.sourceGroupId,
+        threadKind: topic.threadKind,
+        telegramChatId: topic.telegramChatId,
+        telegramMessageId: input.telegramMessageId,
+        telegramTopicId: topic.telegramTopicId,
+        bodyText: text,
+      });
+    } catch (err) {
+      logger.warn({ err }, 'upsertMessageLink t2z failed');
+    }
+  }
+
   logger.info(
     {
       topicId: input.topicId,
       threadId: topic.sourceGroupId,
       threadKind: topic.threadKind,
+      quoted: !!quote,
     },
     'Forwarded Telegram topic → Zalo',
   );

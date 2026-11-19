@@ -22,7 +22,24 @@ type ApiWithCloud = API & {
     groupId: string,
     lastMsgId?: string,
     options?: { isOld?: boolean | number },
-  ) => Promise<{ groupMsgs?: Array<{ data?: { ts?: string | number }; ts?: string | number }> }>;
+  ) => Promise<{
+    groupMsgs?: Array<{
+      data?: { ts?: string | number; msgId?: string | number };
+      ts?: string | number;
+      type?: number;
+      threadId?: string;
+      isSelf?: boolean;
+    }>;
+    lastMsgId?: string;
+    hasMore?: number;
+    isOld?: number;
+    isFiltered?: number | boolean;
+  }>;
+  undo?: (
+    payload: { msgId: string | number; cliMsgId: string | number },
+    threadId: string,
+    type?: ThreadType,
+  ) => Promise<unknown>;
 };
 
 function normalizeZaloTs(raw: number | undefined): number | undefined {
@@ -124,8 +141,15 @@ export type GroupInboundHandler = (
   msg: NormalizedGroupMessage,
 ) => void | Promise<void>;
 
+export type UndoHandler = (undo: {
+  targetMsgId?: string;
+  zaloThreadId?: string;
+  isSelf?: boolean;
+}) => void | Promise<void>;
+
 export class PersonalAccountAdapter {
   private handler: GroupInboundHandler | null = null;
+  private undoHandler: UndoHandler | null = null;
   private readonly queue: SendQueue;
   private started = false;
   /** Tin vừa gửi đi — bỏ echo isSelf để tránh vòng A→B→A. */
@@ -179,6 +203,10 @@ export class PersonalAccountAdapter {
     this.handler = handler;
   }
 
+  onUndo(handler: UndoHandler): void {
+    this.undoHandler = handler;
+  }
+
   /** Gọi khi WS đóng hẳn (hết retry) — SessionManager restart tenant. */
   private onClosedHandler: ((code: number, reason: string) => void) | null = null;
 
@@ -193,6 +221,20 @@ export class PersonalAccountAdapter {
         logger.error({ err, tenantId: this.tenantId }, 'Personal inbound failed');
       });
     });
+    const listener = this.api.listener as typeof this.api.listener & {
+      on(event: 'undo', cb: (undo: unknown) => void): void;
+    };
+    if (typeof listener.on === 'function') {
+      try {
+        listener.on('undo', (undo) => {
+          void this.handleUndo(undo).catch((err) => {
+            logger.error({ err, tenantId: this.tenantId }, 'Personal undo failed');
+          });
+        });
+      } catch {
+        // một số bản zca-js không emit undo
+      }
+    }
     this.api.listener.on('disconnected', (code, reason) => {
       logger.warn(
         { tenantId: this.tenantId, code, reason: String(reason) },
@@ -283,6 +325,8 @@ export class PersonalAccountAdapter {
           String(raw.msgId),
           String(raw.cliMsgId),
         );
+        const { setZaloCliMsgId } = await import('../db/message-links.js');
+        setZaloCliMsgId(this.tenantId, String(raw.msgId), String(raw.cliMsgId));
       }
       logger.debug(
         { tenantId: this.tenantId, groupId: normalized.groupId },
@@ -513,6 +557,119 @@ export class PersonalAccountAdapter {
     return groups;
   }
 
+  private async handleUndo(raw: unknown): Promise<void> {
+    if (!this.undoHandler || !raw || typeof raw !== 'object') return;
+    const u = raw as {
+      data?: { msgId?: string | number; idTo?: string | number };
+      threadId?: string;
+      isSelf?: boolean;
+    };
+    const targetMsgId =
+      u.data?.msgId != null ? String(u.data.msgId) : undefined;
+    const zaloThreadId =
+      u.threadId != null
+        ? String(u.threadId)
+        : u.data?.idTo != null
+          ? String(u.data.idTo)
+          : undefined;
+    await this.undoHandler({
+      targetMsgId,
+      zaloThreadId,
+      isSelf: Boolean(u.isSelf),
+    });
+  }
+
+  /**
+   * Lịch sử group (cũ → mới) qua getCloudMessage / getGroupChatHistory.
+   */
+  async fetchGroupHistory(
+    groupId: string,
+    count = 50,
+  ): Promise<{
+    messages: NormalizedGroupMessage[];
+    meta: {
+      pages: number;
+      rawCount: number;
+      isFiltered: boolean;
+      lastMsgId?: string;
+      source: 'cloud' | 'empty';
+    };
+  }> {
+    const want = Math.max(1, Math.min(count, 200));
+    const { msgs, pages, isFiltered, lastMsgId, source } =
+      await fetchGroupHistoryMessages(this.api, groupId, want);
+
+    msgs.sort((a, b) => {
+      const ta =
+        normalizeZaloTs(
+          a.data?.ts != null ? Number(a.data.ts) : undefined,
+        ) ?? 0;
+      const tb =
+        normalizeZaloTs(
+          b.data?.ts != null ? Number(b.data.ts) : undefined,
+        ) ?? 0;
+      return ta - tb;
+    });
+
+    const out: NormalizedGroupMessage[] = [];
+    for (const raw of msgs) {
+      const normalized = parseGroupMessage(raw, 'group');
+      if (normalized) out.push(normalized);
+    }
+
+    logger.info(
+      {
+        tenantId: this.tenantId,
+        groupId,
+        requested: want,
+        got: out.length,
+        pages,
+        isFiltered,
+        lastMsgId,
+        source,
+      },
+      'Fetched Zalo group chat history',
+    );
+
+    return {
+      messages: out,
+      meta: {
+        pages,
+        rawCount: msgs.length,
+        isFiltered,
+        lastMsgId,
+        source,
+      },
+    };
+  }
+
+  async undoMessage(params: {
+    msgId: string;
+    cliMsgId: string;
+    threadId: string;
+    threadKind?: 'user' | 'group';
+  }): Promise<void> {
+    const api = this.api as ApiWithCloud;
+    if (typeof api.undo !== 'function') {
+      throw new Error('API undo không khả dụng');
+    }
+    const threadType =
+      params.threadKind === 'user' ? ThreadType.User : ThreadType.Group;
+    await api.undo(
+      { msgId: params.msgId, cliMsgId: params.cliMsgId },
+      params.threadId,
+      threadType,
+    );
+    logger.info(
+      {
+        tenantId: this.tenantId,
+        threadId: params.threadId,
+        msgId: params.msgId,
+      },
+      'Zalo undo ok',
+    );
+  }
+
   sendText(
     threadId: string,
     text: string,
@@ -531,8 +688,7 @@ export class PersonalAccountAdapter {
       const threadType =
         opts?.threadKind === 'user' ? ThreadType.User : ThreadType.Group;
       // clientId trong zca-js = Date.now() — lấy gần đúng trước khi gọi API
-      const cliMsgId = String(Date.now());
-      const ts = cliMsgId;
+      const cliMsgIdGuess = String(Date.now());
       const payload =
         styles || mentions || quote
           ? {
@@ -543,10 +699,17 @@ export class PersonalAccountAdapter {
             }
           : text;
       const result = await this.api.sendMessage(payload, threadId, threadType);
+      const msg = result.message as
+        | { msgId?: string | number; cliMsgId?: string | number }
+        | null
+        | undefined;
+      const messageId = String(msg?.msgId ?? 'ok');
+      const cliMsgId =
+        msg?.cliMsgId != null ? String(msg.cliMsgId) : cliMsgIdGuess;
       return {
-        messageId: String(result.message?.msgId ?? 'ok'),
+        messageId,
         cliMsgId,
-        ts,
+        ts: cliMsgIdGuess,
       };
     });
   }
@@ -624,6 +787,118 @@ export class PersonalAccountAdapter {
       }
     });
   }
+}
+
+async function fetchGroupHistoryMessages(
+  api: API,
+  groupId: string,
+  count: number,
+): Promise<{
+  msgs: ZaloListenerMessage[];
+  pages: number;
+  isFiltered: boolean;
+  lastMsgId?: string;
+  source: 'cloud' | 'empty';
+}> {
+  const cloudApi = api as ApiWithCloud;
+  if (typeof cloudApi.getCloudMessage === 'function') {
+    try {
+      if (typeof api.getGroupInfo === 'function') {
+        await api.getGroupInfo(groupId);
+      }
+    } catch {
+      // warm — ignore
+    }
+
+    const collected: ZaloListenerMessage[] = [];
+    const seen = new Set<string>();
+    let lastMsgId: string | undefined;
+    let isOld = false;
+    let isFiltered = false;
+    let pages = 0;
+    let finalLastMsgId: string | undefined;
+
+    for (let i = 0; i < 8 && collected.length < count; i++) {
+      let page: Awaited<ReturnType<NonNullable<ApiWithCloud['getCloudMessage']>>>;
+      try {
+        page = lastMsgId
+          ? await cloudApi.getCloudMessage(groupId, lastMsgId, { isOld })
+          : await cloudApi.getCloudMessage!(groupId);
+      } catch (err) {
+        const code = (err as { code?: number | string })?.code;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (code === -69 || /stop retry/i.test(msg)) break;
+        throw err;
+      }
+      pages += 1;
+      if (page.isFiltered) isFiltered = true;
+      const batch = (page.groupMsgs ?? []) as ZaloListenerMessage[];
+      for (const m of batch) {
+        const id =
+          m && typeof m === 'object' && 'data' in m && m.data?.msgId != null
+            ? String(m.data.msgId)
+            : '';
+        if (id) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+        }
+        collected.push(m);
+        if (collected.length >= count) break;
+      }
+
+      const nextId =
+        page.lastMsgId != null && String(page.lastMsgId) !== '0'
+          ? String(page.lastMsgId)
+          : '';
+      finalLastMsgId = nextId || finalLastMsgId;
+      const pageIsOldFlag = Number(page.isOld ?? 0) === 1;
+
+      if (!batch.length) {
+        if ((page.isFiltered || Number(page.isFiltered)) && nextId && !isOld) {
+          lastMsgId = nextId;
+          isOld = true;
+          continue;
+        }
+        break;
+      }
+      if (!nextId || nextId === lastMsgId) break;
+      lastMsgId = nextId;
+      isOld = pageIsOldFlag;
+      if (Number(page.hasMore ?? 0) !== 1 && !pageIsOldFlag) break;
+    }
+
+    if (collected.length > 0) {
+      return {
+        msgs: collected,
+        pages,
+        isFiltered,
+        lastMsgId: finalLastMsgId,
+        source: 'cloud',
+      };
+    }
+    return {
+      msgs: [],
+      pages,
+      isFiltered,
+      lastMsgId: finalLastMsgId,
+      source: 'empty',
+    };
+  }
+
+  if (typeof api.getGroupChatHistory === 'function') {
+    const hist = await api.getGroupChatHistory(groupId, count);
+    const msgs = [...(hist.groupMsgs ?? [])] as ZaloListenerMessage[];
+    return {
+      msgs,
+      pages: 1,
+      isFiltered: false,
+      source: msgs.length ? 'cloud' : 'empty',
+    };
+  }
+
+  throw new Error(
+    'Không có API lịch sử group (cần zca-js ≥ 2.2 với getCloudMessage)',
+  );
 }
 
 async function dumpInboundRaw(

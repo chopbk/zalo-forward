@@ -41,7 +41,7 @@ export type ForwardRuleRow = {
 
 let db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export function getDb(): Database.Database {
   if (db) return db;
@@ -343,6 +343,44 @@ function migrate(database: Database.Database): void {
     database.exec(`
       ALTER TABLE telegram_topics
         ADD COLUMN thread_kind TEXT NOT NULL DEFAULT 'group';
+    `);
+    database
+      .prepare(
+        `INSERT INTO schema_meta(key, value) VALUES('version', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run('7');
+    logger.info({ version: 7 }, 'DB migrated');
+  }
+
+  const after7 = database
+    .prepare(`SELECT value FROM schema_meta WHERE key = 'version'`)
+    .get() as { value: string } | undefined;
+  const ver7 = after7 ? Number(after7.value) : 0;
+
+  if (ver7 < 8) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS message_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+        direction TEXT NOT NULL,
+        zalo_msg_id TEXT NOT NULL,
+        zalo_cli_msg_id TEXT,
+        zalo_uid_from TEXT,
+        zalo_thread_id TEXT NOT NULL,
+        thread_kind TEXT NOT NULL DEFAULT 'group',
+        telegram_chat_id TEXT NOT NULL,
+        telegram_message_id INTEGER NOT NULL,
+        telegram_topic_id INTEGER,
+        body_text TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_message_links_zalo
+        ON message_links(tenant_id, zalo_msg_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_message_links_tg
+        ON message_links(tenant_id, telegram_chat_id, telegram_message_id);
+      CREATE INDEX IF NOT EXISTS idx_message_links_topic
+        ON message_links(telegram_topic_id);
     `);
     database
       .prepare(

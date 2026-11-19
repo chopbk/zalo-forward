@@ -135,6 +135,12 @@ export function setInboundOnly(topicId: number, inboundOnly: boolean): void {
     .run(inboundOnly ? 1 : 0, topicId);
 }
 
+export function updateTopicTitle(topicId: number, title: string): void {
+  getDb()
+    .prepare(`UPDATE telegram_topics SET topic_title = ? WHERE telegram_topic_id = ?`)
+    .run(title, topicId);
+}
+
 export function deleteTelegramTopic(topicId: number): boolean {
   const info = getDb()
     .prepare(`DELETE FROM telegram_topics WHERE telegram_topic_id = ?`)

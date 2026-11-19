@@ -30,6 +30,7 @@ import { parseSignalMeta, type SignalMeta } from './signal-meta.js';
 import { isTelegramDest, parseTelegramDest } from '../telegram/dest.js';
 import { sendPayloadToTelegramTopic } from '../telegram/send.js';
 import { findTopicById, setThreadKind } from '../db/telegram-topics.js';
+import { upsertMessageLink } from '../db/message-links.js';
 
 let drainTimer: ReturnType<typeof setInterval> | null = null;
 let draining = false;
@@ -265,7 +266,7 @@ async function processOneJob(): Promise<boolean> {
       if (!topicId) {
         throw new Error(`Invalid telegram dest: ${payload.destGroupId}`);
       }
-      await sendPayloadToTelegramTopic({
+      const tgMsgId = await sendPayloadToTelegramTopic({
         topicId,
         chatId: payload.telegramChatId,
         text: payload.text,
@@ -276,6 +277,29 @@ async function processOneJob(): Promise<boolean> {
           payload.threadKind === 'user' ? undefined : payload.senderName,
         isSelf: payload.isSelf,
       });
+      if (tgMsgId != null && payload.sourceMessageId) {
+        const topic = findTopicById(topicId);
+        const chatId =
+          payload.telegramChatId ?? topic?.telegramChatId ?? '';
+        if (chatId) {
+          try {
+            upsertMessageLink({
+              tenantId: job.tenantId,
+              direction: 'z2t',
+              zaloMsgId: payload.sourceMessageId,
+              zaloUidFrom: undefined,
+              zaloThreadId: payload.sourceGroupId,
+              threadKind: payload.threadKind ?? topic?.threadKind ?? 'group',
+              telegramChatId: chatId,
+              telegramMessageId: tgMsgId,
+              telegramTopicId: topicId,
+              bodyText: payload.text,
+            });
+          } catch (err) {
+            logger.warn({ err, topicId }, 'upsertMessageLink z2t failed');
+          }
+        }
+      }
       markJobDone(job.id);
       return true;
     }
