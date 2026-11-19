@@ -47,6 +47,20 @@ function normalizeZaloTs(raw: number | undefined): number | undefined {
   return raw < 1e12 ? raw * 1000 : raw;
 }
 
+/**
+ * So khớp id Zalo 19 chữ số — JSON.parse có thể làm lệch precision Number.
+ * Khớp exact, hoặc cùng độ dài và 15 số đầu (phần an toàn của float64).
+ */
+function zaloIdEqual(a: unknown, b: unknown): boolean {
+  const sa = String(a ?? '').trim();
+  const sb = String(b ?? '').trim();
+  if (!sa || !sb) return false;
+  if (sa === sb) return true;
+  if (!/^\d+$/.test(sa) || !/^\d+$/.test(sb)) return false;
+  if (sa.length !== sb.length || sa.length < 16) return false;
+  return sa.slice(0, 15) === sb.slice(0, 15);
+}
+
 /** Pin id từ Zalo thường dạng `g123` / `u456`. */
 function normalizePinId(raw: string): string {
   if (raw.startsWith('g') || raw.startsWith('u')) return raw.slice(1);
@@ -622,8 +636,33 @@ export class PersonalAccountAdapter {
     };
   }> {
     const want = Math.max(1, Math.min(count, 200));
-    const { msgs, pages, isFiltered, lastMsgId, source } =
+    let { msgs, pages, isFiltered, lastMsgId, source } =
       await fetchGroupHistoryMessages(this.api, groupId, want);
+
+    // Cloud trống / bị filter → fallback WS old_messages (giống 1-1)
+    if (msgs.length === 0) {
+      try {
+        const ws = await this.fetchHistoryViaWs(groupId, 'group', want);
+        if (ws.messages.length > 0) {
+          logger.info(
+            {
+              tenantId: this.tenantId,
+              groupId,
+              got: ws.messages.length,
+              pages: ws.meta.pages,
+            },
+            'Group history via WS fallback (cloud empty/filtered)',
+          );
+          return ws;
+        }
+        pages += ws.meta.pages;
+      } catch (err) {
+        logger.warn(
+          { err, tenantId: this.tenantId, groupId },
+          'Group WS history fallback failed',
+        );
+      }
+    }
 
     msgs.sort((a, b) => {
       const ta =
@@ -652,7 +691,7 @@ export class PersonalAccountAdapter {
         pages,
         isFiltered,
         lastMsgId,
-        source,
+        source: out.length ? source : 'empty',
       },
       'Fetched Zalo group chat history',
     );
@@ -664,7 +703,7 @@ export class PersonalAccountAdapter {
         rawCount: msgs.length,
         isFiltered,
         lastMsgId,
-        source,
+        source: out.length ? source : 'empty',
       },
     };
   }
@@ -687,7 +726,24 @@ export class PersonalAccountAdapter {
     };
   }> {
     const want = Math.max(1, Math.min(count, 200));
-    const run = () => this.fetchUserHistoryViaWs(userId, want);
+    return this.fetchHistoryViaWs(userId, 'user', want);
+  }
+
+  private async fetchHistoryViaWs(
+    threadId: string,
+    threadKind: 'user' | 'group',
+    want: number,
+  ): Promise<{
+    messages: NormalizedGroupMessage[];
+    meta: {
+      pages: number;
+      rawCount: number;
+      isFiltered: boolean;
+      lastMsgId?: string;
+      source: 'cloud' | 'ws_old' | 'empty';
+    };
+  }> {
+    const run = () => this.fetchHistoryViaWsUnlocked(threadId, threadKind, want);
     const prev = this.userHistoryTail;
     let release!: () => void;
     this.userHistoryTail = new Promise<void>((r) => {
@@ -701,8 +757,9 @@ export class PersonalAccountAdapter {
     }
   }
 
-  private fetchUserHistoryViaWs(
-    userId: string,
+  private fetchHistoryViaWsUnlocked(
+    threadId: string,
+    threadKind: 'user' | 'group',
     want: number,
   ): Promise<{
     messages: NormalizedGroupMessage[];
@@ -740,13 +797,33 @@ export class PersonalAccountAdapter {
       );
     }
 
+    const wantType =
+      threadKind === 'user' ? ThreadType.User : ThreadType.Group;
+
     return new Promise((resolve, reject) => {
       const collected: ZaloListenerMessage[] = [];
       const seen = new Set<string>();
+      const sampleThreadIds: string[] = [];
       let pages = 0;
       let cursor: string | null = null;
       let settled = false;
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const matchesThread = (m: ZaloListenerMessage): boolean => {
+        if (zaloIdEqual(m.threadId, threadId)) return true;
+        const data = m.data as {
+          idTo?: string | number;
+          uidFrom?: string | number;
+        };
+        if (threadKind === 'group') {
+          return zaloIdEqual(data?.idTo, threadId);
+        }
+        // 1-1: threadId đã là peer; thêm idTo/uidFrom phòng precision lệch
+        return (
+          zaloIdEqual(data?.idTo, threadId) ||
+          zaloIdEqual(data?.uidFrom, threadId)
+        );
+      };
 
       const cleanup = () => {
         if (idleTimer) clearTimeout(idleTimer);
@@ -775,7 +852,7 @@ export class PersonalAccountAdapter {
 
         const out: NormalizedGroupMessage[] = [];
         for (const raw of collected) {
-          const normalized = parseGroupMessage(raw, 'user');
+          const normalized = parseGroupMessage(raw, threadKind);
           if (normalized) out.push(normalized);
         }
         const sliced = out.slice(-want);
@@ -783,13 +860,17 @@ export class PersonalAccountAdapter {
         logger.info(
           {
             tenantId: this.tenantId,
-            userId,
+            threadId,
+            threadKind,
             requested: want,
             got: sliced.length,
             pages,
+            sampleThreadIds: sampleThreadIds.slice(0, 8),
             source: sliced.length ? 'ws_old' : 'empty',
           },
-          'Fetched Zalo 1-1 chat history',
+          threadKind === 'user'
+            ? 'Fetched Zalo 1-1 chat history'
+            : 'Fetched Zalo group history via WS',
         );
 
         resolve({
@@ -806,19 +887,23 @@ export class PersonalAccountAdapter {
 
       const armIdle = () => {
         if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => finish(), 4_000);
+        // Chờ thêm chút giữa các page WS
+        idleTimer = setTimeout(() => finish(), 5_000);
       };
 
       const onOld = (msgs: ZaloListenerMessage[], type: ThreadType) => {
         if (settled) return;
-        if (type !== ThreadType.User && Number(type) !== ThreadType.User) {
-          return;
-        }
+        const typeNum = Number(type);
+        if (type !== wantType && typeNum !== wantType) return;
         pages += 1;
         armIdle();
 
         for (const m of msgs) {
-          if (String(m.threadId) !== String(userId)) continue;
+          if (sampleThreadIds.length < 12) {
+            const tid = String(m.threadId ?? '');
+            if (tid && !sampleThreadIds.includes(tid)) sampleThreadIds.push(tid);
+          }
+          if (!matchesThread(m)) continue;
           const id = m.data?.msgId != null ? String(m.data.msgId) : '';
           if (id) {
             if (seen.has(id)) continue;
@@ -831,7 +916,7 @@ export class PersonalAccountAdapter {
         const nextCursor =
           last?.data?.msgId != null ? String(last.data.msgId) : null;
 
-        if (collected.length >= want || msgs.length === 0 || pages >= 15) {
+        if (collected.length >= want || msgs.length === 0 || pages >= 20) {
           finish();
           return;
         }
@@ -841,7 +926,7 @@ export class PersonalAccountAdapter {
         }
         cursor = nextCursor;
         try {
-          requestOld(ThreadType.User, cursor);
+          requestOld(wantType, cursor);
         } catch (err) {
           settled = true;
           cleanup();
@@ -852,17 +937,16 @@ export class PersonalAccountAdapter {
       listener.on('old_messages', onOld);
       armIdle();
       try {
-        requestOld(ThreadType.User, null);
+        requestOld(wantType, null);
       } catch (err) {
         settled = true;
         cleanup();
         reject(err);
       }
 
-      // Hard timeout
       setTimeout(() => {
         if (!settled) finish();
-      }, 20_000);
+      }, 25_000);
     });
   }
 
