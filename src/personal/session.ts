@@ -86,7 +86,7 @@ export function cookieHeaderFromSession(session: ZaloSessionFile): string {
 
 export async function loginWithSession(path: string): Promise<API> {
   const session = await loadSession(path);
-  // selfListen: nhận cả tin do nick này gửi trong group (forward “all”)
+  // selfListen: nhận cả tin do nick này gửi trong group (forward “Bạn: …” lên TG)
   const zalo = new Zalo({ imageMetadataGetter, selfListen: true });
   const api = await zalo.login({
     cookie: session.cookie,
@@ -94,7 +94,18 @@ export async function loginWithSession(path: string): Promise<API> {
     userAgent: session.userAgent,
     language: session.language,
   });
-  logger.info({ path, ownId: api.getOwnId() }, 'Personal Zalo session loaded');
+  // Đảm bảo flag không bị mất sau login (Listener copy lúc construct)
+  if (api.listener && api.listener.selfListen !== true) {
+    api.listener.selfListen = true;
+  }
+  logger.info(
+    {
+      path,
+      ownId: api.getOwnId(),
+      selfListen: Boolean(api.listener?.selfListen),
+    },
+    'Personal Zalo session loaded',
+  );
   return api;
 }
 

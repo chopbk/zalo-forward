@@ -211,9 +211,19 @@ export class PersonalAccountAdapter {
       logger.warn({ err, tenantId: this.tenantId }, 'Personal WS error');
     });
     // Quan trọng: không bật retryOnClose thì WS đứt = mất hết tin forward
+    // Phòng trường hợp option bị lệch
+    if (this.api.listener.selfListen !== true) {
+      this.api.listener.selfListen = true;
+    }
     this.api.listener.start({ retryOnClose: true });
     this.started = true;
-    logger.info({ tenantId: this.tenantId }, 'Personal listener started');
+    logger.info(
+      {
+        tenantId: this.tenantId,
+        selfListen: Boolean(this.api.listener.selfListen),
+      },
+      'Personal listener started',
+    );
   }
 
   stop(): void {
@@ -257,7 +267,8 @@ export class PersonalAccountAdapter {
       return;
     }
 
-    // Bỏ echo của chính lệnh gửi đi (tránh loop khi có luật ngược)
+    // Chỉ bỏ echo của tin bot vừa gửi qua API (tránh vòng A→B→A).
+    // Tin tự gõ trên Zalo (phone/PC) vẫn forward — cần selfListen: true.
     if (normalized.isSelf && this.isEchoOutbound(normalized.groupId, normalized.text)) {
       // Bổ sung cliMsgId cho neo reply tín hiệu (sendMessage chỉ trả msgId)
       const raw = message.data as {
@@ -278,6 +289,18 @@ export class PersonalAccountAdapter {
         'Skip outbound echo',
       );
       return;
+    }
+
+    if (normalized.isSelf) {
+      logger.info(
+        {
+          tenantId: this.tenantId,
+          threadId: normalized.groupId,
+          threadKind: normalized.threadKind,
+          messageId: normalized.messageId,
+        },
+        'Inbound self message — will forward',
+      );
     }
 
     await this.handler(normalized);

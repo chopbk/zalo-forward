@@ -98,7 +98,7 @@ export function startQrLogin(tenantId: number, cbs: QrLoginCallbacks): void {
       await mkdir(env.QR_DIR, { recursive: true });
       const qrPath = join(env.QR_DIR, `tenant-${tenantId}.png`);
       const sessionPath = sessionPathForTenant(tenantId);
-      const zalo = new Zalo({ imageMetadataGetter });
+      const zalo = new Zalo({ imageMetadataGetter, selfListen: true });
 
       const api = await zalo.loginQR({}, (event) => {
         if (stopped) {
@@ -165,7 +165,10 @@ export function startQrLogin(tenantId: number, cbs: QrLoginCallbacks): void {
                   userAgent: event.data.userAgent,
                 };
                 await saveSessionAtomic(session, sessionPath);
-                const logged = await new Zalo({ imageMetadataGetter }).login(session);
+                const logged = await new Zalo({
+                  imageMetadataGetter,
+                  selfListen: true,
+                }).login(session);
                 const ownId = logged.getOwnId();
                 try {
                   logged.listener.stop();
