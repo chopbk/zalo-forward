@@ -1,5 +1,7 @@
 import { getDb } from './client.js';
 
+export type ThreadKind = 'user' | 'group';
+
 export type TelegramTopic = {
   telegramTopicId: number;
   tenantId: number;
@@ -9,6 +11,7 @@ export type TelegramTopic = {
   topicTitle: string | null;
   inboundOnly: boolean;
   topicMissing: boolean;
+  threadKind: ThreadKind;
   createdAt: string;
 };
 
@@ -21,6 +24,7 @@ type Row = {
   topic_title: string | null;
   inbound_only: number;
   topic_missing: number;
+  thread_kind?: string | null;
   created_at: string;
 };
 
@@ -34,6 +38,7 @@ function mapRow(row: Row): TelegramTopic {
     topicTitle: row.topic_title,
     inboundOnly: row.inbound_only === 1,
     topicMissing: row.topic_missing === 1,
+    threadKind: row.thread_kind === 'user' ? 'user' : 'group',
     createdAt: row.created_at,
   };
 }
@@ -67,13 +72,14 @@ export function insertTelegramTopic(input: {
   telegramChatId: string;
   topicTitle?: string | null;
   inboundOnly?: boolean;
+  threadKind?: ThreadKind;
 }): TelegramTopic {
   getDb()
     .prepare(
       `INSERT INTO telegram_topics (
          telegram_topic_id, tenant_id, rule_id, source_group_id,
-         telegram_chat_id, topic_title, inbound_only
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         telegram_chat_id, topic_title, inbound_only, thread_kind
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.telegramTopicId,
@@ -83,8 +89,15 @@ export function insertTelegramTopic(input: {
       input.telegramChatId,
       input.topicTitle ?? null,
       (input.inboundOnly ?? true) ? 1 : 0,
+      input.threadKind === 'user' ? 'user' : 'group',
     );
   return findTopicById(input.telegramTopicId)!;
+}
+
+export function setThreadKind(topicId: number, threadKind: ThreadKind): void {
+  getDb()
+    .prepare(`UPDATE telegram_topics SET thread_kind = ? WHERE telegram_topic_id = ?`)
+    .run(threadKind === 'user' ? 'user' : 'group', topicId);
 }
 
 export function updateTopicRuleId(topicId: number, ruleId: number): void {

@@ -64,10 +64,17 @@ export async function forwardTopicReplyToZalo(input: {
     if (images.length === 0) {
       throw new Error('Không lấy được file ảnh từ Telegram');
     }
-    await adapter.sendImages(topic.sourceGroupId, images, input.caption ?? '');
+    await adapter.sendImages(topic.sourceGroupId, images, input.caption ?? '', {
+      threadKind: topic.threadKind,
+    });
     logger.info(
-      { topicId: input.topicId, groupId: topic.sourceGroupId, photos: images.length },
-      'Forwarded Telegram photos → Zalo group',
+      {
+        topicId: input.topicId,
+        threadId: topic.sourceGroupId,
+        threadKind: topic.threadKind,
+        photos: images.length,
+      },
+      'Forwarded Telegram photos → Zalo',
     );
     return;
   }
@@ -78,9 +85,14 @@ export async function forwardTopicReplyToZalo(input: {
   const styles = telegramEntitiesToZaloStyles(text, input.entities);
   await adapter.sendText(topic.sourceGroupId, text, {
     styles: styles.length ? styles : undefined,
+    threadKind: topic.threadKind,
   });
   logger.info(
-    { topicId: input.topicId, groupId: topic.sourceGroupId },
-    'Forwarded Telegram topic → Zalo group',
+    {
+      topicId: input.topicId,
+      threadId: topic.sourceGroupId,
+      threadKind: topic.threadKind,
+    },
+    'Forwarded Telegram topic → Zalo',
   );
 }

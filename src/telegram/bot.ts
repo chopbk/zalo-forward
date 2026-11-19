@@ -291,6 +291,7 @@ function wireHandlers(bot: Bot): void {
           wantsTelegram: true,
           filterMode: 'all',
           inboundOnly,
+          threadKind: kind,
           mergeExistingZalo: true,
         });
         ok += 1;
@@ -298,11 +299,6 @@ function wireHandlers(bot: Bot): void {
         lines.push(
           `${created ? '+' : '~'} [${kind}]${modeTag} ${displayName ?? '—'} id=${zaloId} → ${tgDest ?? '?'} rule=#${rule.id}`,
         );
-        if (kind === 'user') {
-          lines.push(
-            `  ↳ lưu ý: listener hiện forward group; map user đã tạo topic sẵn`,
-          );
-        }
       } catch (err) {
         fail += 1;
         logger.error({ err, zaloId }, 'useradd failed');

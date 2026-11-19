@@ -17,6 +17,8 @@ export type ExtractedLink = {
 
 export type NormalizedGroupMessage = {
   groupId: string;
+  /** user = chat 1-1; group = nhóm. */
+  threadKind: 'user' | 'group';
   messageId: string;
   /** Timestamp tin gốc (ms hoặc giây — giữ raw number từ Zalo). */
   ts?: number;
@@ -138,20 +140,24 @@ export function formatLinkText(link: ExtractedLink): string {
   return lines.join('\n');
 }
 
-export function parseGroupMessage(message: {
-  threadId: string;
-  isSelf: boolean;
-  data: {
-    content?: unknown;
-    msgType?: string;
-    msgId?: string | number;
-    uidFrom?: string | number;
-    dName?: string;
-    ts?: string | number;
-    propertyExt?: unknown;
-    mentions?: unknown;
-  };
-}): NormalizedGroupMessage | null {
+export function parseGroupMessage(
+  message: {
+    threadId: string;
+    isSelf: boolean;
+    type?: number;
+    data: {
+      content?: unknown;
+      msgType?: string;
+      msgId?: string | number;
+      uidFrom?: string | number;
+      dName?: string;
+      ts?: string | number;
+      propertyExt?: unknown;
+      mentions?: unknown;
+    };
+  },
+  threadKind: 'user' | 'group' = 'group',
+): NormalizedGroupMessage | null {
   const messageId =
     message.data.msgId != null ? String(message.data.msgId) : null;
   if (!messageId) return null;
@@ -228,6 +234,7 @@ export function parseGroupMessage(message: {
 
   return {
     groupId: String(message.threadId),
+    threadKind,
     messageId,
     ts,
     senderId: message.data.uidFrom != null ? String(message.data.uidFrom) : undefined,

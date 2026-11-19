@@ -228,10 +228,12 @@ export class PersonalAccountAdapter {
   }
 
   private async handleMessage(message: ZaloListenerMessage): Promise<void> {
-    // Chỉ group — 1:1 với nick không forward
-    if (message.type !== ThreadType.Group && Number(message.type) !== ThreadType.Group) {
-      return;
-    }
+    const typeNum = Number(message.type);
+    const isGroup =
+      message.type === ThreadType.Group || typeNum === ThreadType.Group;
+    const isUser =
+      message.type === ThreadType.User || typeNum === ThreadType.User;
+    if (!isGroup && !isUser) return;
     if (!this.handler) return;
 
     // Dump raw để bắt format/style (propertyExt thường thiếu styles trên listener)
@@ -239,16 +241,18 @@ export class PersonalAccountAdapter {
       logger.debug({ err }, 'dumpInboundRaw failed');
     });
 
-    const normalized = parseGroupMessage(message);
+    const threadKind = isGroup ? 'group' : 'user';
+    const normalized = parseGroupMessage(message, threadKind);
     if (!normalized) {
       logger.debug(
         {
           tenantId: this.tenantId,
-          groupId: message.threadId,
+          threadId: message.threadId,
+          threadKind,
           msgType: message.data?.msgType,
           isSelf: message.isSelf,
         },
-        'Skip group message (unsupported / empty)',
+        'Skip inbound message (unsupported / empty)',
       );
       return;
     }
@@ -487,19 +491,22 @@ export class PersonalAccountAdapter {
   }
 
   sendText(
-    groupId: string,
+    threadId: string,
     text: string,
     opts?: {
       styles?: ForwardStyle[];
       mentions?: ForwardMention[];
       quote?: import('zca-js').SendMessageQuote;
+      threadKind?: 'user' | 'group';
     },
   ): Promise<{ messageId: string; cliMsgId: string; ts: string }> {
     return this.queue.enqueue(async () => {
-      this.markOutbound(groupId, text);
+      this.markOutbound(threadId, text);
       const styles = opts?.styles?.length ? opts.styles : undefined;
       const mentions = opts?.mentions?.length ? opts.mentions : undefined;
       const quote = opts?.quote;
+      const threadType =
+        opts?.threadKind === 'user' ? ThreadType.User : ThreadType.Group;
       // clientId trong zca-js = Date.now() — lấy gần đúng trước khi gọi API
       const cliMsgId = String(Date.now());
       const ts = cliMsgId;
@@ -512,7 +519,7 @@ export class PersonalAccountAdapter {
               ...(quote ? { quote } : {}),
             }
           : text;
-      const result = await this.api.sendMessage(payload, groupId, ThreadType.Group);
+      const result = await this.api.sendMessage(payload, threadId, threadType);
       return {
         messageId: String(result.message?.msgId ?? 'ok'),
         cliMsgId,
@@ -560,9 +567,10 @@ export class PersonalAccountAdapter {
   }
 
   sendImages(
-    groupId: string,
+    threadId: string,
     images: Array<{ url: string }>,
     caption = '',
+    opts?: { threadKind?: 'user' | 'group' },
   ): Promise<{ messageId: string }> {
     return this.queue.enqueue(async () => {
       const paths: string[] = [];
@@ -572,14 +580,16 @@ export class PersonalAccountAdapter {
           const path = await writeTempImage(buf);
           paths.push(path);
         }
-        this.markOutbound(groupId, caption || '[image]');
+        this.markOutbound(threadId, caption || '[image]');
+        const threadType =
+          opts?.threadKind === 'user' ? ThreadType.User : ThreadType.Group;
         const result = await this.api.sendMessage(
           {
             msg: caption,
             attachments: paths.length === 1 ? paths[0]! : paths,
           },
-          groupId,
-          ThreadType.Group,
+          threadId,
+          threadType,
         );
         return {
           messageId: String(

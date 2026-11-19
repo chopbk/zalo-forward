@@ -29,7 +29,7 @@ import { reformatSignalMessage } from './reformat-signal.js';
 import { parseSignalMeta, type SignalMeta } from './signal-meta.js';
 import { isTelegramDest, parseTelegramDest } from '../telegram/dest.js';
 import { sendPayloadToTelegramTopic } from '../telegram/send.js';
-import { findTopicById } from '../db/telegram-topics.js';
+import { findTopicById, setThreadKind } from '../db/telegram-topics.js';
 
 let drainTimer: ReturnType<typeof setInterval> | null = null;
 let draining = false;
@@ -55,12 +55,27 @@ export async function handleGroupInbound(
     logger.debug(
       {
         tenantId: tenant.id,
-        groupId: msg.groupId,
+        threadId: msg.groupId,
+        threadKind: msg.threadKind,
         sender: msg.senderName ?? msg.senderId,
       },
-      'Group inbound — no enabled rule for this source',
+      'Inbound — no enabled rule for this source',
     );
     return;
+  }
+
+  // Backfill thread_kind cho topic cũ (vd. /useradd trước khi hỗ trợ 1-1)
+  if (msg.threadKind === 'user') {
+    for (const rule of rules) {
+      for (const dest of rule.targets) {
+        const topicId = parseTelegramDest(dest);
+        if (topicId == null) continue;
+        const topic = findTopicById(topicId);
+        if (topic && topic.threadKind !== 'user') {
+          setThreadKind(topicId, 'user');
+        }
+      }
+    }
   }
 
   const matched = resolveDestinations(rules, msg.groupId, msg.text);
@@ -132,6 +147,8 @@ export async function handleGroupInbound(
       sourceTs: msg.ts,
       preferNativeForward: isTg ? false : preferNativeForward,
       senderName: msg.senderName,
+      isSelf: msg.isSelf,
+      threadKind: msg.threadKind,
       signalQuote: isTg ? undefined : signalQuote,
       signalStore: isTg ? undefined : signalStore,
       signalMeta: signal,
@@ -254,7 +271,10 @@ async function processOneJob(): Promise<boolean> {
         text: payload.text,
         styles: payload.styles,
         images: payload.images,
-        senderName: payload.senderName,
+        // 1-1: topic đã là người đó — chỉ prefix "Bạn:" khi isSelf
+        senderName:
+          payload.threadKind === 'user' ? undefined : payload.senderName,
+        isSelf: payload.isSelf,
       });
       markJobDone(job.id);
       return true;

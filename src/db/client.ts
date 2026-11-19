@@ -41,7 +41,7 @@ export type ForwardRuleRow = {
 
 let db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 export function getDb(): Database.Database {
   if (db) return db;
@@ -324,6 +324,25 @@ function migrate(database: Database.Database): void {
       );
       CREATE INDEX IF NOT EXISTS idx_tenant_telegram_forum
         ON tenant_telegram(forum_group_id);
+    `);
+    database
+      .prepare(
+        `INSERT INTO schema_meta(key, value) VALUES('version', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run('6');
+    logger.info({ version: 6 }, 'DB migrated');
+  }
+
+  const after6 = database
+    .prepare(`SELECT value FROM schema_meta WHERE key = 'version'`)
+    .get() as { value: string } | undefined;
+  const ver6 = after6 ? Number(after6.value) : 0;
+
+  if (ver6 < 7) {
+    database.exec(`
+      ALTER TABLE telegram_topics
+        ADD COLUMN thread_kind TEXT NOT NULL DEFAULT 'group';
     `);
     database
       .prepare(

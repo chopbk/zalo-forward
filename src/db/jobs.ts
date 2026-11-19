@@ -25,6 +25,8 @@ export type ForwardJobPayload = {
   /** Ưu tiên api.forwardMessage (gần nút Share Zalo) cho tin text. */
   preferNativeForward?: boolean;
   senderName?: string;
+  isSelf?: boolean;
+  threadKind?: 'user' | 'group';
   /** Lookup quote lúc gửi (sau echo có cliMsgId). */
   signalQuote?: {
     prefer: Array<'filled' | 'pending'>;

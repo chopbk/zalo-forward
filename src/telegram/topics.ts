@@ -4,6 +4,7 @@ import {
   findTopicById,
   findTopicBySource,
   insertTelegramTopic,
+  setThreadKind,
   setTopicMissing,
   updateTopicId,
   updateTopicRuleId,
@@ -20,6 +21,7 @@ export async function ensureTelegramTopicForSource(input: {
   sourceGroupId: string;
   ruleId?: number | null;
   inboundOnly?: boolean;
+  threadKind?: 'user' | 'group';
 }): Promise<{ topic: TelegramTopic; destKey: string; created: boolean }> {
   if (!isTelegramEnabled()) {
     throw new Error('Telegram chưa bật. Điền TELEGRAM_BOT_TOKEN trong .env');
@@ -46,6 +48,10 @@ export async function ensureTelegramTopicForSource(input: {
     if (input.ruleId != null && existing.ruleId !== input.ruleId) {
       updateTopicRuleId(existing.telegramTopicId, input.ruleId);
     }
+    if (input.threadKind && existing.threadKind !== input.threadKind) {
+      setThreadKind(existing.telegramTopicId, input.threadKind);
+      existing.threadKind = input.threadKind;
+    }
     return {
       topic: existing,
       destKey: telegramDestKey(existing.telegramTopicId),
@@ -69,6 +75,7 @@ export async function ensureTelegramTopicForSource(input: {
       telegramChatId: chatId,
       topicTitle: title,
       inboundOnly: input.inboundOnly ?? true,
+      threadKind: input.threadKind ?? 'group',
     });
     logger.info(
       {

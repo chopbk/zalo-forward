@@ -20,6 +20,7 @@ export async function resolveTargetsWithTelegram(input: {
   zaloTargets: string[];
   wantsTelegram: boolean;
   inboundOnly?: boolean;
+  threadKind?: 'user' | 'group';
   /** Khi set rule theo id — dùng rule hiện có để merge tg cũ nếu không tạo mới */
   existingTargets?: string[];
 }): Promise<string[]> {
@@ -40,6 +41,7 @@ export async function resolveTargetsWithTelegram(input: {
     tenantId: input.tenantId,
     sourceGroupId: input.sourceGroupId,
     inboundOnly: input.inboundOnly,
+    threadKind: input.threadKind,
   });
 
   if (input.inboundOnly != null) {
@@ -59,6 +61,7 @@ export async function upsertRuleWithTelegram(input: {
   filterMode: 'all' | 'keywords';
   keywords?: string[];
   inboundOnly?: boolean;
+  threadKind?: 'user' | 'group';
   /**
    * true (/addtg): giữ đích Zalo cũ của luật nguồn, chỉ thêm/cập nhật tg.
    * false (/addrule): thay toàn bộ đích bằng danh sách mới (+ tg nếu có).
@@ -79,6 +82,7 @@ export async function upsertRuleWithTelegram(input: {
     zaloTargets,
     wantsTelegram: input.wantsTelegram,
     inboundOnly: input.inboundOnly,
+    threadKind: input.threadKind,
     existingTargets: [],
   });
 
