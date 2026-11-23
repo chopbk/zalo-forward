@@ -165,7 +165,7 @@ function tryPendingNew(t: string): SignalMeta | null {
 
 function tryPendingUpdate(t: string): SignalMeta | null {
   let m = t.match(
-    /^🔸\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\.?\s*\n+Giá chờ:\s*([\d.,]+)(?:\s*\(cũ\s*[\d.,]+\))?\s*\n+Dừng lỗ:\s*([\d.,]+)(?:\s*\(cũ\s*[\d.,]+\))?\s*\n+Chốt lời:\s*([\d.,]+)/i,
+    /^(?:🔹|🔸)\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\.?\s*\n+Giá chờ:\s*([\d.,]+)(?:\s*\(cũ\s*[\d.,]+\))?\s*\n+Dừng lỗ:\s*([\d.,]+)(?:\s*\(cũ\s*[\d.,]+\))?\s*\n+Chốt lời:\s*([\d.,]+)/i,
   );
   if (m) {
     return base('pending_update', m[3]!, {
@@ -178,7 +178,7 @@ function tryPendingUpdate(t: string): SignalMeta | null {
     });
   }
   m = t.match(
-    /^🔸\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+.+\(([A-Z0-9]+)\)/i,
+    /^(?:🔹|🔸)\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+.+\(([A-Z0-9]+)\)/i,
   );
   if (m) {
     return base('pending_update', m[2]!, {

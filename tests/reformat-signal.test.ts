@@ -76,6 +76,23 @@ A/C sửa lệnh Sell Limit, Dừng lỗ và Chốt lời theo các mức mới 
     );
   });
 
+  it('pending update buy with blue diamond', () => {
+    const old = `🔹 [Chờ] Cập nhật lệnh chờ mua Khô đậu tương tháng 1 (ZMEF27).
+Giá chờ: 336.95 (cũ 336.66)
+Dừng lỗ: 332.81 (cũ 331.27)
+Chốt lời: 348.54 (cũ 351.75)
+A/C sửa lệnh Buy Limit, Dừng lỗ và Chốt lời theo các mức mới nhé ạ!`;
+    expect(reformatSignalMessage(old)).toBe(
+      `🔄 [CẬP NHẬT LỆNH CHỜ MUA] KHÔ ĐẬU TƯƠNG T1 (ZMEF27)
+
+🔸 Giá Buy Limit: 336.95 (Cũ: 336.66)
+🛑 Dừng lỗ: 332.81 (Cũ: 331.27)
+🎯 Chốt lời: 348.54 (Cũ: 351.75)
+
+📌 A/C vui lòng điều chỉnh lệnh Buy Limit, Dừng lỗ và Chốt lời theo các mức giá mới bên trên nhé ạ`,
+    );
+  });
+
   it('pending update with old prices on all lines', () => {
     const old = `🔸 [Chờ] Cập nhật lệnh chờ bán Bạc micro tháng 3 (SILH27).
 Giá chờ: 47.088 (cũ 47.083)

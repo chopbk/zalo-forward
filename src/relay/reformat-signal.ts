@@ -94,10 +94,11 @@ function tryPendingNew(t: string): string | null {
   ].join('\n');
 }
 
-/** 🔸 [Chờ] Cập nhật lệnh chờ bán ... — (cũ …) tùy chọn trên mọi dòng giá */
+/** 🔹/🔸 [Chờ] Cập nhật lệnh chờ mua|bán ... — (cũ …) tùy chọn trên mọi dòng giá */
 function tryPendingUpdate(t: string): string | null {
+  // Không dùng [🔹🔸] — surrogate pair trong character class match sai
   const m = t.match(
-    /^🔸\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\.?\s*\n+Giá chờ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Dừng lỗ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Chốt lời:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+([\s\S]+)$/i,
+    /^(?:🔹|🔸)\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\.?\s*\n+Giá chờ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Dừng lỗ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Chốt lời:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+([\s\S]+)$/i,
   );
   if (!m) return null;
   const side = sideLabel(m[1]!);
