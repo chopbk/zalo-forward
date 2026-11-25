@@ -94,23 +94,18 @@ function tryPendingNew(t: string): string | null {
   ].join('\n');
 }
 
-/** 🔹/🔸 [Chờ] Cập nhật lệnh chờ mua|bán ... — (cũ …) tùy chọn trên mọi dòng giá */
-function tryPendingUpdate(t: string): string | null {
-  // Không dùng [🔹🔸] — surrogate pair trong character class match sai
-  const m = t.match(
-    /^(?:🔹|🔸)\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\.?\s*\n+Giá chờ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Dừng lỗ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Chốt lời:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+([\s\S]+)$/i,
-  );
-  if (!m) return null;
-  const side = sideLabel(m[1]!);
-  const product = formatProductName(m[2]!, 'short');
-  const code = m[3]!;
-  const price = formatPrice(m[4]!);
-  const priceOld = m[5] ? formatPrice(m[5]) : null;
-  const sl = formatPrice(m[6]!);
-  const slOld = m[7] ? formatPrice(m[7]) : null;
-  const tp = formatPrice(m[8]!);
-  const tpOld = m[9] ? formatPrice(m[9]) : null;
-
+function formatPendingUpdate(opts: {
+  side: ReturnType<typeof sideLabel>;
+  product: string;
+  code: string;
+  price: string;
+  priceOld: string | null;
+  sl: string;
+  slOld: string | null;
+  tp: string;
+  tpOld: string | null;
+}): string {
+  const { side, product, code, price, priceOld, sl, slOld, tp, tpOld } = opts;
   const priceLine = priceOld
     ? `🔸 Giá ${side.limit}: ${price} (Cũ: ${priceOld})`
     : `🔸 Giá ${side.limit}: ${price}`;
@@ -126,6 +121,53 @@ function tryPendingUpdate(t: string): string | null {
     '',
     `📌 A/C vui lòng điều chỉnh lệnh ${side.limit}, Dừng lỗ và Chốt lời theo các mức giá mới bên trên nhé ạ`,
   ].join('\n');
+}
+
+/** 🔹/🔸 [Chờ] Cập nhật lệnh chờ mua|bán ... */
+function tryPendingUpdate(t: string): string | null {
+  return tryPendingUpdateDetailed(t) ?? tryPendingUpdateCompact(t);
+}
+
+/** Chi tiết nhiều dòng: Giá chờ / Dừng lỗ / Chốt lời (± cũ) */
+function tryPendingUpdateDetailed(t: string): string | null {
+  // Không dùng [🔹🔸] — surrogate pair trong character class match sai
+  const m = t.match(
+    /^(?:🔹|🔸)\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)[:.]?\s*\n+Giá chờ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Dừng lỗ:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+Chốt lời:\s*([\d.,]+)(?:\s*\(cũ\s*([\d.,]+)\))?\s*\n+([\s\S]+)$/i,
+  );
+  if (!m) return null;
+  return formatPendingUpdate({
+    side: sideLabel(m[1]!),
+    product: formatProductName(m[2]!, 'short'),
+    code: m[3]!,
+    price: formatPrice(m[4]!),
+    priceOld: m[5] ? formatPrice(m[5]) : null,
+    sl: formatPrice(m[6]!),
+    slOld: m[7] ? formatPrice(m[7]) : null,
+    tp: formatPrice(m[8]!),
+    tpOld: m[9] ? formatPrice(m[9]) : null,
+  });
+}
+
+/**
+ * Rút gọn 1 dòng:
+ * Giá chờ mới: 41.670 - SL: 43.012 - TP: 37.913
+ */
+function tryPendingUpdateCompact(t: string): string | null {
+  const m = t.match(
+    /^(?:🔹|🔸)\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)[:.]?\s*\n+Giá chờ\s*mới:\s*([\d.,]+)\s*[-–—]\s*SL:\s*([\d.,]+)\s*[-–—]\s*TP:\s*([\d.,]+)\s*\n+([\s\S]+)$/i,
+  );
+  if (!m) return null;
+  return formatPendingUpdate({
+    side: sideLabel(m[1]!),
+    product: formatProductName(m[2]!, 'short'),
+    code: m[3]!,
+    price: formatPrice(m[4]!),
+    priceOld: null,
+    sl: formatPrice(m[5]!),
+    slOld: null,
+    tp: formatPrice(m[6]!),
+    tpOld: null,
+  });
 }
 
 /** 🔵 Mua ... [n] tại giá ... */

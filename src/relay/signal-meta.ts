@@ -165,7 +165,21 @@ function tryPendingNew(t: string): SignalMeta | null {
 
 function tryPendingUpdate(t: string): SignalMeta | null {
   let m = t.match(
-    /^(?:🔹|🔸)\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)\.?\s*\n+Giá chờ:\s*([\d.,]+)(?:\s*\(cũ\s*[\d.,]+\))?\s*\n+Dừng lỗ:\s*([\d.,]+)(?:\s*\(cũ\s*[\d.,]+\))?\s*\n+Chốt lời:\s*([\d.,]+)/i,
+    /^(?:🔹|🔸)\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)[:.]?\s*\n+Giá chờ:\s*([\d.,]+)(?:\s*\(cũ\s*[\d.,]+\))?\s*\n+Dừng lỗ:\s*([\d.,]+)(?:\s*\(cũ\s*[\d.,]+\))?\s*\n+Chốt lời:\s*([\d.,]+)/i,
+  );
+  if (m) {
+    return base('pending_update', m[3]!, {
+      side: normSide(m[1]!),
+      product: m[2]!,
+      quotePrefer: ['pending'],
+      entryPrice: m[4]!,
+      slPrice: m[5]!,
+      tpPrice: m[6]!,
+    });
+  }
+  // Rút gọn: Giá chờ mới: X - SL: Y - TP: Z
+  m = t.match(
+    /^(?:🔹|🔸)\s*\[Chờ\]\s*Cập nhật lệnh chờ\s+(mua|bán)\s+(.+?)\s+\(([A-Z0-9]+)\)[:.]?\s*\n+Giá chờ\s*mới:\s*([\d.,]+)\s*[-–—]\s*SL:\s*([\d.,]+)\s*[-–—]\s*TP:\s*([\d.,]+)/i,
   );
   if (m) {
     return base('pending_update', m[3]!, {

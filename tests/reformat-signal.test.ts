@@ -93,6 +93,21 @@ A/C sửa lệnh Buy Limit, Dừng lỗ và Chốt lời theo các mức mới n
     );
   });
 
+  it('pending update compact one-line prices', () => {
+    const old = `🔸 [Chờ] Cập nhật lệnh chờ bán Bạc micro tháng 3 (SILH27):
+Giá chờ mới: 41.670 - SL: 43.012 - TP: 37.913
+A/C sửa lệnh chờ theo các mức giá mới nhé ạ!`;
+    expect(reformatSignalMessage(old)).toBe(
+      `🔄 [CẬP NHẬT LỆNH CHỜ BÁN] BẠC MICRO T3 (SILH27)
+
+🔸 Giá Sell Limit: 41.670
+🛑 Dừng lỗ: 43.012
+🎯 Chốt lời: 37.913
+
+📌 A/C vui lòng điều chỉnh lệnh Sell Limit, Dừng lỗ và Chốt lời theo các mức giá mới bên trên nhé ạ`,
+    );
+  });
+
   it('pending update with old prices on all lines', () => {
     const old = `🔸 [Chờ] Cập nhật lệnh chờ bán Bạc micro tháng 3 (SILH27).
 Giá chờ: 47.088 (cũ 47.083)
